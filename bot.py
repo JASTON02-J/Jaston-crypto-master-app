@@ -5,6 +5,17 @@ import time
 import json
 import os
 
+def update_status(status):
+    with open("bot_status.txt", "w") as f:
+        f.write(status)
+    # Hapa ndipo unapo-sync na GitHub moja kwa moja
+    os.system("git add bot_status.txt")
+    os.system('git commit -m "update status"')
+    os.system("git push")
+
+# Unapo-stop bot yako:
+update_status("STOPPED")
+
 # ================= CONFIG =================
 API_KEY = 'UqjUuCgKJvVYVYrs6pmbGNOngRMBKVeVZ6NbUnx2goW7iuneSBaCBLI3hwWlesL8'
 SECRET = 'xv19ZTtg8ArsEZ2F4YB1KAEX5xDBZ4g7eiYM7j7skLBTvkDOwLmTA9xPmMQ1aI8V'

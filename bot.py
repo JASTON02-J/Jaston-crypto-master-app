@@ -4,17 +4,46 @@ import ta
 import time
 import json
 import os
+import signal
+import sys
+import json
+import time
 
 def update_status(status):
+    # 1. Badilisha faili la ndani
     with open("bot_status.txt", "w") as f:
         f.write(status)
-    # Hapa ndipo unapo-sync na GitHub moja kwa moja
-    os.system("git add bot_status.txt")
-    os.system('git commit -m "update status"')
-    os.system("git push")
+    
+    # 2. Tuma mabadiliko hayo kwenye GitHub (Automatic Sync)
+    # Tunatumia try hapa kuzuia bot isizime kama internet ikisumbua
+    try:
+        os.system("git add bot_status.txt")
+        os.system(f'git commit -m "update status to {status}"')
+        os.system("git push")
+    except Exception as e:
+        print(f"Git push failed: {e}")
 
-# Unapo-stop bot yako:
-update_status("STOPPED")
+def handle_exit(sig, frame):
+    print("\nBot stopped manually")
+    update_status("STOPPED")
+    sys.exit(0)
+
+# Huu mstari unakamata Ctrl+C na kuita handle_exit
+signal.signal(signal.SIGINT, handle_exit)
+
+print("Bot is starting...")
+update_status("ACTIVE")
+
+try:
+    while True:
+        # Hapa ndipo code zako za trading zinatakiwa kuwepo
+        print("Bot is running...")
+        time.sleep(10) 
+        
+except Exception as e:
+    print(f"Error: {e}")
+    update_status("STOPPED")
+    time.sleep(10)
 
 # ================= CONFIG =================
 API_KEY = 'UqjUuCgKJvVYVYrs6pmbGNOngRMBKVeVZ6NbUnx2goW7iuneSBaCBLI3hwWlesL8'

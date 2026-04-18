@@ -21,3 +21,4 @@
 [00:16:29] Bal:0.00 | PnL:0.0000 | DOWN
 [00:17:01] Bal:0.00 | PnL:0.0000 | DOWN
 [00:17:30] Bal:0.00 | PnL:0.0000 | DOWN
+[00:22:08] Bot stopped by user

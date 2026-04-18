@@ -1,1 +1,1 @@
-"ACTIVE" ; git add bot_status.txt; git commit -m "Force Active Status"; git push
+ACTIVE 

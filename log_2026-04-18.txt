@@ -1,1 +1,9 @@
 [16:47:25] SYSTEM: LIVE
+[16:47:28] Bot started successfully
+[16:47:34] Price: 75914.5 | Scanning: DOWN Trend
+[16:47:45] Price: 75921.7 | Scanning: DOWN Trend
+[16:47:56] Price: 75928.0 | Scanning: DOWN Trend
+[16:48:06] Price: 75925.8 | Scanning: DOWN Trend
+[16:48:17] Price: 75944.2 | Scanning: DOWN Trend
+[16:48:28] Price: 75944.4 | Scanning: DOWN Trend
+[16:48:33] SYSTEM: STOPPED

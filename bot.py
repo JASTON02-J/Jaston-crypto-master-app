@@ -5,19 +5,20 @@ import time
 import os
 import json
 
-# ================= CONFIG (API KEY HALISI) =================
+# ================= CONFIG (LIVE API KEYS) =================
 API_KEY = 'UqjUuCgKJvVYVYrs6pmbGNOngRMBKVeVZ6NbUnx2goW7iuneSBaCBLI3hwWlesL8'
 SECRET = 'xv19ZTtg8ArsEZ2F4YB1KAEX5xDBZ4g7eiYM7j7skLBTvkDOwLmTA9xPmMQ1aI8V'
-symbol = 'BTC/USDT'
-timeframe = '1m'
+SYMBOL = 'BTC/USDT'
+TIMEFRAME = '1m'
 DATA_FILE = "trade_data.json"
 ACTIVE_FILE = "active_trade.json"
 STATUS_FILE = "bot_status.txt"
 
-# Mipangilio ya Risk
-BASE_RISK = 0.01  
-TRAILING_DISTANCE = 0.5 
+# Risk Management Settings
+BASE_RISK = 0.01  # 1% of total balance per trade
+TRAILING_DISTANCE = 0.5 # Trailing Stop Loss at 0.5%
 
+# Initialize Binance Exchange (Futures)
 exchange = ccxt.binance({
     'apiKey': API_KEY,
     'secret': SECRET,
@@ -36,17 +37,24 @@ def save_json(file, data):
     with open(file, "w") as f: json.dump(data, f, indent=4)
 
 def update_github_sync(status_text):
-    """Inatuma data GitHub ili dashibodi ionekane Active au Stopped"""
-    with open(STATUS_FILE, "w") as f:
-        f.write(status_text)
-    os.system("git add bot_status.txt && git commit -m 'Auto-status update' && git push")
+    """Sends bot status to GitHub to update the Streamlit Dashboard"""
+    try:
+        with open(STATUS_FILE, "w") as f:
+            f.write(status_text)
+        
+        # Fixed Git commands to avoid pathspec errors
+        os.system("git add bot_status.txt")
+        os.system('git commit -m "update_status"')
+        os.system("git push")
+    except Exception as e:
+        print(f"Sync Error: {e}")
 
 trade_data = load_json(DATA_FILE, {"wins": 0, "losses": 0, "profit": 0})
 active_trade = load_json(ACTIVE_FILE, None)
 
 # ================= TRADING FUNCTIONS =================
 def get_analysis():
-    bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=50)
+    bars = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME, limit=50)
     df = pd.DataFrame(bars, columns=['time','open','high','low','close','vol'])
     df['rsi'] = ta.momentum.RSIIndicator(df['close'], 14).rsi()
     df['ema9'] = ta.trend.ema_indicator(df['close'], 9)
@@ -60,8 +68,9 @@ def open_position(side, price):
         amount = (balance * BASE_RISK) / price 
         
         print(f"🚀 EXECUTING LIVE {side.upper()} ORDER...")
-        order = exchange.create_market_order(symbol, side, amount)
+        order = exchange.create_market_order(SYMBOL, side, amount)
         
+        # Initial SL (1.5%) and TP (3.0%)
         sl = price * 0.985 if side == 'buy' else price * 1.015
         tp = price * 1.03 if side == 'buy' else price * 0.97
         
@@ -71,15 +80,17 @@ def open_position(side, price):
             'order_id': order['id']
         }
         save_json(ACTIVE_FILE, active_trade)
-        update_github_sync(f"ACTIVE: {side.upper()} @ {price}")
+        update_github_sync(f"ACTIVE: {side.upper()} at {price}")
     except Exception as e:
-        print(f"❌ Imeshindwa kufungua trade: {e}")
+        print(f"❌ Order Failed: {e}")
 
 def close_position(price):
     global active_trade, trade_data
     try:
         side_to_close = 'sell' if active_trade['side'] == 'buy' else 'buy'
-        exchange.create_market_order(symbol, side_to_close, active_trade['amount'])
+        print(f"🔒 CLOSING POSITION AT ${price}...")
+        
+        exchange.create_market_order(SYMBOL, side_to_close, active_trade['amount'])
         
         pnl = (price - active_trade['entry']) * active_trade['amount'] if active_trade['side'] == 'buy' else (active_trade['entry'] - price) * active_trade['amount']
         
@@ -92,11 +103,11 @@ def close_position(price):
         active_trade = None
         update_github_sync(f"ACTIVE: Profit ${trade_data['profit']:.2f}")
     except Exception as e:
-        print(f"❌ Imeshindwa kufunga trade: {e}")
+        print(f"❌ Close Failed: {e}")
 
-# ================= MAIN LOOP ILYOBORESHWA =================
+# ================= MAIN LOOP =================
 print("✅ JASTON MASTER BOT IS STARTING...")
-update_github_sync("ACTIVE") # Inaanza kwa kuweka dashibodi Active
+update_github_sync("ACTIVE")
 
 try:
     while True:
@@ -110,19 +121,22 @@ try:
         print(f"-------------------------------------------")
 
         if active_trade:
-            # Logic ya Trailing na Kufunga trade
+            # Trailing Stop Logic
             if active_trade['side'] == 'buy':
                 if current_price > active_trade['highest_price']:
                     active_trade['highest_price'] = current_price
                     new_sl = current_price * (1 - (TRAILING_DISTANCE / 100))
                     if new_sl > active_trade['sl']: active_trade['sl'] = new_sl
+                
                 if current_price <= active_trade['sl'] or current_price >= active_trade['tp']:
                     close_position(current_price)
+
             elif active_trade['side'] == 'sell':
                 if current_price < active_trade['highest_price']:
                     active_trade['highest_price'] = current_price
                     new_sl = current_price * (1 + (TRAILING_DISTANCE / 100))
                     if new_sl < active_trade['sl']: active_trade['sl'] = new_sl
+                
                 if current_price >= active_trade['sl'] or current_price <= active_trade['tp']:
                     close_position(current_price)
 
@@ -136,9 +150,9 @@ try:
             elif last_data['ema9'] < last_data['ema21'] and last_data['rsi'] > 65:
                 open_position('sell', current_price)
 
-        time.sleep(1)
+        time.sleep(1) 
 
 except KeyboardInterrupt:
-    print("\n🛑 KUZIMA BOT... Tafadhali subiri sekunde chache kutuma hali GitHub.")
+    print("\n🛑 SHUTTING DOWN... Updating status to GitHub.")
     update_github_sync("STOPPED")
-    print("✅ Dashboard imewekwa STOPPED. Kwa heri!")
+    print("✅ Dashboard set to STOPPED. Goodbye!")

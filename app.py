@@ -115,6 +115,6 @@ with right_col:
     if st.button("Refresh Dashboard"):
         st.rerun()
 
-# Auto-refresh kila baada ya sekunde 30
-time.sleep(30)
+# Auto-refresh kila baada ya sekunde 5
+time.sleep(5)
 st.rerun()

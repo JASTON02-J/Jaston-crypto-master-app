@@ -127,17 +127,15 @@ def close_position(price):
 # ================= MAIN LOOP =================
 print("🚀 JASTON MASTER TRADE BOT IS ACTIVE...")
 
-# --- ONGEZA MSTARI HUU HAPA CHINI ---
+# --- Huu mstari uliuweka sawa ---
 update_github_sync("Jaston Master Bot is LIVE and Scanning... 🔍")
 
-try:
-    while True:
-        m = analyze_market()
-        # ... (code zingine zote zinaendelea hapa)
+# --- Hapa ndipo penye kosa, hakikisha pamekaa hivi ---
 try:
     while True:
         m = analyze_market()
         price = m['price']
+        
         os.system('cls' if os.name == 'nt' else 'clear')
         print(f"=== JASTON MASTER TRADE BOT ===")
         print(f"🔵 15M TREND: {m['trend_15m']} | 🟢 5M TREND: {m['trend_5m']}")
@@ -153,7 +151,6 @@ try:
                 if price < active_trade['highest_price']: active_trade['highest_price'] = price
                 if price >= active_trade['sl'] or price <= active_trade['tp']: close_position(price)
         else:
-            # HII NDIO SEHEMU ULIYOULIZIA:
             if m['adx_5m'] < MIN_ADX or m['trend_15m'] == "SIDEWAYS":
                 print("😴 STATUS: Side-way Market. Waiting for trend...")
             else:
@@ -164,5 +161,8 @@ try:
                 else:
                     print("🔍 STATUS: Trend is okay, waiting for 1m Entry Signal...")
 
-        time.sleep(2)
-except KeyboardInterrupt: print("🛑 Stopped.")
+        time.sleep(1) # Hapa weka 1 kama ulivyotaka
+        
+except KeyboardInterrupt:
+    print("🛑 Stopped.")
+# --- HAKIKISHA HII 'except' IPO HAPA CHINI KABISA ---

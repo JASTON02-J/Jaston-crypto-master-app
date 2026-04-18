@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import time
+import json
 from datetime import datetime
 
 # ================= CONFIG =================
@@ -9,25 +10,51 @@ st.set_page_config(page_title="Jaston Master Trade", layout="wide")
 st.markdown("""
     <style>
     .reportview-container { background: #0e1117; }
-    .stMetric { background: #161b22; padding: 10px; border-radius: 5px; }
+    .stMetric { 
+        background: #161b22; 
+        padding: 15px; 
+        border-radius: 10px; 
+        border: 1px solid #30363d;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# ================= LOAD DATA =================
+# ================= LOAD DATA FUNCTIONS =================
 def get_bot_status():
     if os.path.exists("bot_status.txt"):
-        with open("bot_status.txt", "r") as f:
-            return f.read().strip()
+        try:
+            with open("bot_status.txt", "r") as f:
+                return f.read().strip()
+        except: return "ERROR"
     return "UNKNOWN"
+
+def load_trade_data():
+    """Inasoma faida, hasara na PnL kutoka trade_data.json"""
+    default = {"wins": 0, "losses": 0, "profit": 0.0}
+    if os.path.exists("trade_data.json"):
+        try:
+            with open("trade_data.json", "r") as f:
+                return json.load(f)
+        except: return default
+    return default
 
 def get_latest_logs():
     today = datetime.now().strftime("%Y-%m-%d")
     log_file = f"log_{today}.txt"
     if os.path.exists(log_file):
-        with open(log_file, "r") as f:
-            lines = f.readlines()
-            return lines[-5:] # Inaonyesha mistari 5 ya mwisho
-    return ["No logs found for today."]
+        try:
+            with open(log_file, "r") as f:
+                lines = f.readlines()
+                return lines[-8:] # Inaonyesha mistari 8 ya mwisho kwa muonekano bora
+        except: return ["Error reading logs."]
+    return ["No activity recorded yet today."]
+
+# ================= DATA PROCESSING =================
+data = load_trade_data()
+wins = data.get("wins", 0)
+losses = data.get("losses", 0)
+pnl = data.get("profit", 0.0)
+total_trades = wins + losses
 
 # ================= UI ELEMENTS =================
 st.title("🚀 JASTON MASTER TRADE")
@@ -41,29 +68,43 @@ else:
 
 st.divider()
 
-# Metrics
-col1, col2, col3 = st.columns(3)
-col1.metric("Total Profit", "$0.00") # Hapa unaweza kuunganisha trade_data.json
-col2.metric("Active Symbol", "BTC/USDT")
-col3.metric("Strategy", "Triple TF")
+# --- ROW 1: TRADING SUMMARY ---
+st.subheader("📊 Trading Performance (Today)")
+m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+
+# Total Trades
+m_col1.metric("Total Trades", f"{total_trades}")
+
+# Total Gain (Wins)
+m_col2.metric("Total Gain (Wins)", f"✅ {wins}")
+
+# Total Lose (Losses)
+m_col3.metric("Total Lose", f"❌ {losses}")
+
+# PnL (Profit and Loss)
+pnl_color = "normal" if pnl >= 0 else "inverse"
+m_col4.metric("Total PnL (Profit)", f"${pnl:,.2f}", delta=f"{pnl:,.2f}", delta_color=pnl_color)
 
 st.divider()
 
-# Main Layout
+# --- ROW 2: LOGS AND INFO ---
 left, right = st.columns([2, 1])
 
 with left:
-    st.subheader("📡 Recent Activity Logs (Ripoti ya Leo)")
+    st.subheader("📡 Recent Activity Logs")
     logs = get_latest_logs()
-    for log in reversed(logs):
-        st.text(log.strip())
+    # Tunatumia box kuonyesha logs
+    log_text = "".join(reversed(logs))
+    st.code(log_text, language="bash")
 
 with right:
-    st.subheader("⚙️ Bot Info")
+    st.subheader("⚙️ System Info")
     st.info(f"**Current Action:** {status}")
-    if st.button("Manual Refresh"):
+    st.write(f"**Last Update:** {datetime.now().strftime('%H:%M:%S')}")
+    
+    if st.button("🔄 Manual Refresh"):
         st.rerun()
 
-# Auto Refresh
+# Auto Refresh kila baada ya sekunde 10
 time.sleep(5)
 st.rerun()

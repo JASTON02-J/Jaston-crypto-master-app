@@ -1,71 +1,55 @@
 import streamlit as st
 import json
 import os
-from streamlit_autorefresh import st_autorefresh
 
-# ================= MIPANGILIO =================
-st.set_page_config(page_title="JASTON MASTER TRADE", layout="wide")
-# Inajisafisha kila sekunde 5 ili uone faida inavyobadilika
-st_autorefresh(interval=1000, key="datarefresh")
+# Configuration
+st.set_page_config(page_title="Jaston Intelligence Dashboard", layout="wide")
 
-# MAFAILI YA DATA
-DATA_FILE = "trade_data.json"
-ACTIVE_FILE = "active_trade.json"
-STATUS_FILE = "bot_status.txt"
+def load_json(file, default):
+    if os.path.exists(file):
+        try:
+            with open(file, "r") as f:
+                return json.load(f)
+        except:
+            return default
+    return default
 
-# KAZI ZA KUPAKIA DATA
-def load_json(file_path, default):
-    if not os.path.exists(file_path): return default
-    try:
-        with open(file_path, "r") as f: return json.load(f)
-    except: return default
+# Load Data
+trade_data = load_json("trade_data.json", {"wins": 0, "losses": 0, "profit": 0})
+active_trade = load_json("active_trade.json", None)
 
-def get_bot_status():
-    if not os.path.exists(STATUS_FILE): return "UNKNOWN"
-    try:
-        with open(STATUS_FILE, "r") as f: return f.read().strip().upper()
-    except: return "UNKNOWN"
+st.title("🚀 Jaston Triple-TF Intelligence")
 
-# ================= DASHBOARD UI =================
-st.markdown("<h1 style='text-align:center; color:gold;'>🚀 JASTON MASTER TRADE 🚀</h1>", unsafe_allow_html=True)
-
-# HALI YA BOT
-status = get_bot_status()
-if "ACTIVE" in status:
-    st.success(f"🟢 BOT STATUS: {status}")
-else:
-    st.error(f"🔴 BOT STATUS: {status}")
-
-# VIPIMO VYA FAIDA (METRICS)
-data = load_json(DATA_FILE, {"wins": 0, "losses": 0, "profit": 0})
-total_trades = data['wins'] + data['losses']
-winrate = (data['wins'] / total_trades * 100) if total_trades > 0 else 0
-
+# --- TOP METRICS ---
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("💰 Total Profit", f"${data['profit']:.2f}")
-col2.metric("✅ Wins", data['wins'])
-col3.metric("❌ Losses", data['losses'])
-col4.metric("🎯 Winrate", f"{winrate:.1f}%")
+col1.metric("Total Profit", f"${trade_data.get('profit', 0):.2f}")
+col2.metric("Wins ✅", trade_data.get('wins', 0))
+col3.metric("Losses ❌", trade_data.get('losses', 0))
 
-st.markdown("---")
+wins = trade_data.get('wins', 0)
+losses = trade_data.get('losses', 0)
+winrate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
+col4.metric("Winrate", f"{winrate:.1f}%")
 
-# TRADE INAYOENDELEA (ACTIVE TRADE)
-st.subheader("📡 Live Position Details")
-active = load_json(ACTIVE_FILE, None)
+st.divider()
 
-if active:
-    # Tunatengeneza muonekano mzuri wa trade iliyopo
-    color = "lime" if active['side'].lower() == "buy" else "red"
-    st.markdown(f"""
-    <div style='padding:20px; border-radius:10px; background-color:#1e1e1e; border-left: 10px solid {color};'>
-        <h2 style='color:{color}; margin-top:0;'>{active['side'].upper()} POSITION ACTIVE</h2>
-        <p style='font-size:20px;'><b>Entry Price:</b> ${active['entry']:,.2f}</p>
-        <p style='font-size:20px; color:orange;'><b>Stop Loss (Trailing):</b> ${active['sl']:,.2f}</p>
-        <p style='font-size:20px; color:cyan;'><b>Take Profit:</b> ${active['tp']:,.2f}</p>
-        <p style='font-size:18px;'><b>Amount:</b> {active['amount']:.4f} BTC</p>
-    </div>
-    """, unsafe_allow_html=True)
+# --- LIVE POSITION ---
+st.subheader("📡 Live Market Status")
+if active_trade:
+    color = "green" if active_trade['side'] == 'buy' else "red"
+    st.success(f"ACTIVE {active_trade['side'].upper()} POSITION")
+    c1, c2, c3 = st.columns(3)
+    c1.write(f"**Entry:** ${active_trade['entry']:,}")
+    c2.write(f"**Stop Loss:** ${active_trade['sl']:,}")
+    c3.write(f"**Take Profit:** ${active_trade['tp']:,}")
+    st.info(f"Strategy: {active_trade.get('strategy', 'N/A')}")
 else:
-    st.info("Searching for new trade opportunities... 🔍")
+    st.info("Bot is active and searching for Triple-TF confirmation... 🔍")
+
+# --- BOT LOGS ---
+if os.path.exists("bot_status.txt"):
+    with open("bot_status.txt", "r") as f:
+        status = f.read()
+    st.write(f"**Current Action:** {status}")
 
 st.markdown("<br><p style='text-align:center; color:gray;'>Last Update: Just now</p>", unsafe_allow_html=True)

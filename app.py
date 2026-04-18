@@ -68,4 +68,4 @@ if active:
 else:
     st.info("Searching for new trade opportunities... 🔍")
 
-st.markdown("<br><p style='text-align:center; color:gray;'>Mwisho wa kusasisha: Hivi sasa</p>", unsafe_allow_html=True)
+st.markdown("<br><p style='text-align:center; color:gray;'>Last Update: Just now</p>", unsafe_allow_html=True)

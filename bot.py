@@ -19,8 +19,10 @@ BASE_RISK = 0.01
 MIN_ADX = 20              
 
 exchange = ccxt.binance({
-    'apiKey': API_KEY, 'secret': SECRET,
-    'enableRateLimit': True, 'options': {'defaultType': 'future'}
+    'apiKey': API_KEY, 
+    'secret': SECRET,
+    'enableRateLimit': True, 
+    'options': {'defaultType': 'future'}
 })
 
 # ================= DATA HELPERS =================
@@ -39,8 +41,8 @@ def update_github_sync(status_text):
         os.system("git add .")
         os.system(f'git commit -m "update: {status_text}"')
         os.system("git push")
-    except:
-        print("⚠️ GitHub Sync Imefeli (Angalia Internet)")
+    except Exception as e:
+        print(f"Sync Error: {e}")
 
 def get_data(symbol, timeframe, limit=100):
     bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
@@ -83,9 +85,7 @@ try:
         print(f"-------------------------------")
 
         if active_trade:
-            # Logic ya ku-manage trade iliyo wazi (SL/TP)
             if active_trade['side'] == 'buy' and (price <= active_trade['sl'] or price >= active_trade['tp']):
-                # (Hapa ungeweka close_position logic)
                 pass
         else:
             if m['adx_5m'] < MIN_ADX or m['trend_15m'] == "SIDEWAYS":
@@ -96,7 +96,6 @@ try:
         time.sleep(1)
 
 except KeyboardInterrupt:
-    # HAPA NDIPO PANAWEKA RANGI NYEKUNDU DASHIBODINI
-    print("\n🛑 Jaston, unazima bot...")
+    print("\n🛑 Shutting down...")
     update_github_sync("STOPPED 🛑") 
-    print("✅ Dashibodi imebadilika kuwa OFFLINE. Kwaheri!")
+    print("✅ Dashboard updated to OFFLINE.")

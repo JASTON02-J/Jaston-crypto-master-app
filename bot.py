@@ -4,6 +4,7 @@ import ta
 import time
 import os
 import json
+from datetime import datetime
 
 # ================= CONFIG (LIVE API KEYS) =================
 API_KEY = 'UqjUuCgKJvVYVYrs6pmbGNOngRMBKVeVZ6NbUnx2goW7iuneSBaCBLI3hwWlesL8'
@@ -13,20 +14,20 @@ TIMEFRAME = '1m'
 DATA_FILE = "trade_data.json"
 ACTIVE_FILE = "active_trade.json"
 STATUS_FILE = "bot_status.txt"
+HISTORY_FILE = "trade_history.json"
 
-# Risk Management Settings
-BASE_RISK = 0.01  # 1% of total balance per trade
-TRAILING_DISTANCE = 0.5 # Trailing Stop Loss at 0.5%
+# Advanced Scalping Settings
+BASE_RISK = 0.01 
+TRAILING_DISTANCE = 0.3 
+COOLDOWN_MINUTES = 5  
+MIN_ADX = 20  # Trend strength filter (Avoid Sideways)
 
-# Initialize Binance Exchange (Futures)
 exchange = ccxt.binance({
-    'apiKey': API_KEY,
-    'secret': SECRET,
-    'enableRateLimit': True,
-    'options': {'defaultType': 'future'}
+    'apiKey': API_KEY, 'secret': SECRET,
+    'enableRateLimit': True, 'options': {'defaultType': 'future'}
 })
 
-# ================= STATE MANAGEMENT =================
+# ================= STATE & MEMORY MANAGEMENT =================
 def load_json(file, default):
     if not os.path.exists(file): return default
     try:
@@ -37,122 +38,144 @@ def save_json(file, data):
     with open(file, "w") as f: json.dump(data, f, indent=4)
 
 def update_github_sync(status_text):
-    """Sends bot status to GitHub to update the Streamlit Dashboard"""
     try:
-        with open(STATUS_FILE, "w") as f:
-            f.write(status_text)
-        
-        # Fixed Git commands to avoid pathspec errors
+        with open(STATUS_FILE, "w") as f: f.write(status_text)
         os.system("git add bot_status.txt")
         os.system('git commit -m "update_status"')
         os.system("git push")
-    except Exception as e:
-        print(f"Sync Error: {e}")
+    except:
+        pass
 
-trade_data = load_json(DATA_FILE, {"wins": 0, "losses": 0, "profit": 0})
+trade_data = load_json(DATA_FILE, {"wins": 0, "losses": 0, "profit": 0, "last_loss_time": 0})
 active_trade = load_json(ACTIVE_FILE, None)
 
-# ================= TRADING FUNCTIONS =================
+# ================= ADVANCED ANALYSIS =================
 def get_analysis():
-    bars = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME, limit=50)
+    bars = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME, limit=100)
     df = pd.DataFrame(bars, columns=['time','open','high','low','close','vol'])
-    df['rsi'] = ta.momentum.RSIIndicator(df['close'], 14).rsi()
+    
+    # 1. Trend & Strength (EMA + ADX)
     df['ema9'] = ta.trend.ema_indicator(df['close'], 9)
     df['ema21'] = ta.trend.ema_indicator(df['close'], 21)
+    df['adx'] = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], 14).adx()
+    
+    # 2. Momentum (Stoch RSI)
+    stoch_rsi = ta.momentum.StochRSIIndicator(df['close'], 14, 3, 3)
+    df['stoch_k'] = stoch_rsi.stochrsi_k()
+    
+    # 3. Support & Resistance (Dynamic Price Action)
+    df['resistance'] = df['high'].rolling(window=20).max()
+    df['support'] = df['low'].rolling(window=20).min()
+    
+    # 4. Volatility (Bollinger Bands)
+    bb = ta.volatility.BollingerBands(df['close'], 20, 2)
+    df['lower_band'] = bb.bollinger_lband()
+    df['upper_band'] = bb.bollinger_hband()
+    
     return df.iloc[-1]
 
-def open_position(side, price):
+def open_position(side, price, strategy_reason):
     global active_trade
+    current_time = time.time()
+    if current_time - trade_data.get('last_loss_time', 0) < (COOLDOWN_MINUTES * 60):
+        return
+
     try:
         balance = exchange.fetch_balance()['total']['USDT']
         amount = (balance * BASE_RISK) / price 
-        
-        print(f"🚀 EXECUTING LIVE {side.upper()} ORDER...")
         order = exchange.create_market_order(SYMBOL, side, amount)
         
-        # Initial SL (1.5%) and TP (3.0%)
-        sl = price * 0.985 if side == 'buy' else price * 1.015
-        tp = price * 1.03 if side == 'buy' else price * 0.97
+        sl = price * 0.995 if side == 'buy' else price * 1.005
+        tp = price * 1.015 if side == 'buy' else price * 0.985
         
         active_trade = {
             'side': side, 'entry': price, 'amount': amount, 
             'sl': sl, 'tp': tp, 'highest_price': price,
-            'order_id': order['id']
+            'strategy': strategy_reason, 'order_id': order['id'], 
+            'time': str(datetime.now())
         }
         save_json(ACTIVE_FILE, active_trade)
-        update_github_sync(f"ACTIVE: {side.upper()} at {price}")
+        update_github_sync(f"ACTIVE: {side.upper()} via {strategy_reason}")
     except Exception as e:
-        print(f"❌ Order Failed: {e}")
+        print(f"❌ Entry Error: {e}")
 
 def close_position(price):
     global active_trade, trade_data
     try:
         side_to_close = 'sell' if active_trade['side'] == 'buy' else 'buy'
-        print(f"🔒 CLOSING POSITION AT ${price}...")
-        
         exchange.create_market_order(SYMBOL, side_to_close, active_trade['amount'])
         
         pnl = (price - active_trade['entry']) * active_trade['amount'] if active_trade['side'] == 'buy' else (active_trade['entry'] - price) * active_trade['amount']
         
-        trade_data['profit'] += pnl
-        if pnl > 0: trade_data['wins'] += 1
-        else: trade_data['losses'] += 1
+        # --- PERFORMANCE MEMORY REPORT ---
+        print("\n" + "="*30)
+        if pnl > 0:
+            print(f"✅ WINNER! Strategy: {active_trade['strategy']}")
+            print(f"Reason: Price followed trend & momentum after hitting support/resistance.")
+            trade_data['wins'] += 1
+        else:
+            print(f"❌ LOSS. Strategy: {active_trade['strategy']}")
+            print(f"Reason: Sudden reversal or spike hit Stop Loss. Cooldown active.")
+            trade_data['losses'] += 1
+            trade_data['last_loss_time'] = time.time()
+        print("="*30 + "\n")
         
+        trade_data['profit'] += pnl
         save_json(DATA_FILE, trade_data)
         if os.path.exists(ACTIVE_FILE): os.remove(ACTIVE_FILE)
         active_trade = None
         update_github_sync(f"ACTIVE: Profit ${trade_data['profit']:.2f}")
     except Exception as e:
-        print(f"❌ Close Failed: {e}")
+        print(f"❌ Close Error: {e}")
 
 # ================= MAIN LOOP =================
-print("✅ JASTON MASTER BOT IS STARTING...")
+print("✅ JASTON INTELLIGENCE BOT IS LIVE...")
 update_github_sync("ACTIVE")
 
 try:
     while True:
-        last_data = get_analysis()
-        current_price = last_data['close']
+        data = get_analysis()
+        price = data['close']
         
         os.system('cls' if os.name == 'nt' else 'clear')
-        print(f"=== JASTON MASTER TRADE (LIVE BINANCE) ===")
-        print(f"💰 PRICE: ${current_price:,.2f} | RSI: {last_data['rsi']:.1f}")
+        print(f"=== JASTON MASTER SCALPER (LIVE) ===")
+        print(f"💰 PRICE: ${price:,.2f} | ADX: {data['adx']:.1f}")
+        print(f"📊 STOCH K: {data['stoch_k']:.1f} | EMA Trend: {'UP' if data['ema9']>data['ema21'] else 'DOWN'}")
         print(f"📈 PROFIT: ${trade_data['profit']:.2f} | W:{trade_data['wins']} L:{trade_data['losses']}")
-        print(f"-------------------------------------------")
+        print(f"------------------------------------")
 
         if active_trade:
-            # Trailing Stop Logic
+            # Trailing Stop Loss Logic
             if active_trade['side'] == 'buy':
-                if current_price > active_trade['highest_price']:
-                    active_trade['highest_price'] = current_price
-                    new_sl = current_price * (1 - (TRAILING_DISTANCE / 100))
+                if price > active_trade['highest_price']:
+                    active_trade['highest_price'] = price
+                    new_sl = price * (1 - (TRAILING_DISTANCE / 100))
                     if new_sl > active_trade['sl']: active_trade['sl'] = new_sl
-                
-                if current_price <= active_trade['sl'] or current_price >= active_trade['tp']:
-                    close_position(current_price)
-
-            elif active_trade['side'] == 'sell':
-                if current_price < active_trade['highest_price']:
-                    active_trade['highest_price'] = current_price
-                    new_sl = current_price * (1 + (TRAILING_DISTANCE / 100))
+                if price <= active_trade['sl'] or price >= active_trade['tp']:
+                    close_position(price)
+            else:
+                if price < active_trade['highest_price']:
+                    active_trade['highest_price'] = price
+                    new_sl = price * (1 + (TRAILING_DISTANCE / 100))
                     if new_sl < active_trade['sl']: active_trade['sl'] = new_sl
-                
-                if current_price >= active_trade['sl'] or current_price <= active_trade['tp']:
-                    close_position(current_price)
-
-            pnl = (current_price - active_trade['entry']) * active_trade['amount'] if active_trade['side'] == 'buy' else (active_trade['entry'] - current_price) * active_trade['amount']
-            print(f"📡 POS: {active_trade['side'].upper()} | Entry: {active_trade['entry']:.2f}")
-            print(f"🛡️ SL: {active_trade['sl']:.2f} | LIVE PnL: ${pnl:.2f}")
+                if price >= active_trade['sl'] or price <= active_trade['tp']:
+                    close_position(price)
         else:
-            print("😴 STATUS: Analyzing Market...")
-            if last_data['ema9'] > last_data['ema21'] and last_data['rsi'] < 35:
-                open_position('buy', current_price)
-            elif last_data['ema9'] < last_data['ema21'] and last_data['rsi'] > 65:
-                open_position('sell', current_price)
+            # CHECK FOR SIDEWAYS MARKET
+            if data['adx'] < MIN_ADX:
+                print("😴 STATUS: Side-way Market. Waiting for trend...")
+            else:
+                # ENTRY STRATEGIES
+                # 1. Buy: Trend Up + Stoch Oversold + Near Support/Lower Band
+                if (data['ema9'] > data['ema21'] and data['stoch_k'] < 20 and price <= data['support'] * 1.001):
+                    open_position('buy', price, "EMA_Trend+Stoch_Oversold+Support_Bounce")
+                
+                # 2. Sell: Trend Down + Stoch Overbought + Near Resistance/Upper Band
+                elif (data['ema9'] < data['ema21'] and data['stoch_k'] > 80 and price >= data['resistance'] * 0.999):
+                    open_position('sell', price, "EMA_Trend+Stoch_Overbought+Resistance_Reject")
 
-        time.sleep(1) 
+        time.sleep(1)
 
 except KeyboardInterrupt:
-    print("\n🛑 SHUTTING DOWN... Updating status to GitHub.")
     update_github_sync("STOPPED")
-    print("✅ Dashboard set to STOPPED. Goodbye!")
+    print("🛑 Bot Stopped.")

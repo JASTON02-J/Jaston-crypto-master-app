@@ -37,9 +37,10 @@ def save_json(file, data):
 
 def update_github_sync(status_text):
     try:
+        # Tumeondoa emoji hapa ili kuzuia charmap error
         with open(STATUS_FILE, "w") as f: f.write(status_text)
         os.system("git add .")
-        os.system(f'git commit -m "update: {status_text}"')
+        os.system(f'git commit -m "update status"')
         os.system("git push")
     except Exception as e:
         print(f"Sync Error: {e}")
@@ -71,8 +72,8 @@ trade_data = load_json(DATA_FILE, {"wins": 0, "losses": 0, "profit": 0})
 active_trade = load_json(ACTIVE_FILE, None)
 
 # ================= MAIN LOOP =================
-print("🚀 JASTON MASTER TRADE BOT IS ACTIVE...")
-update_github_sync("Jaston Master Bot is LIVE and Scanning... 🔍")
+print("JASTON MASTER TRADE BOT IS ACTIVE...")
+update_github_sync("LIVE")
 
 try:
     while True:
@@ -80,22 +81,22 @@ try:
         price = m['price']
         os.system('cls' if os.name == 'nt' else 'clear')
         print(f"=== JASTON MASTER TRADE BOT ===")
-        print(f"🔵 15M TREND: {m['trend_15m']} | 🟢 5M TREND: {m['trend_5m']}")
-        print(f"💰 PRICE: ${price:,.2f} | ⚡ 5M ADX: {m['adx_5m']:.1f}")
+        print(f"15M TREND: {m['trend_15m']} | 5M TREND: {m['trend_5m']}")
+        print(f"PRICE: ${price:,.2f} | 5M ADX: {m['adx_5m']:.1f}")
         print(f"-------------------------------")
 
         if active_trade:
-            if active_trade['side'] == 'buy' and (price <= active_trade['sl'] or price >= active_trade['tp']):
-                pass
+            pass
         else:
             if m['adx_5m'] < MIN_ADX or m['trend_15m'] == "SIDEWAYS":
-                print("😴 STATUS: Side-way Market. Waiting...")
+                print("STATUS: Side-way Market. Waiting...")
             else:
-                print("🔍 STATUS: Trend is okay, waiting for entry...")
+                print("STATUS: Trend is okay, waiting for entry...")
 
         time.sleep(1)
 
 except KeyboardInterrupt:
-    print("\n🛑 Shutting down...")
-    update_github_sync("STOPPED 🛑") 
-    print("✅ Dashboard updated to OFFLINE.")
+    print("\nShutting down...")
+    # Tumeandika STOPPED bila emoji ili ikubaliwe na Windows CMD
+    update_github_sync("STOPPED") 
+    print("Dashboard updated to OFFLINE.")

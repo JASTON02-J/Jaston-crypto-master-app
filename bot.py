@@ -14,81 +14,84 @@ DATA_FILE = "trade_data.json"
 ACTIVE_FILE = "active_trade.json"
 STATUS_FILE = "bot_status.txt"
 
-# Initialize Exchange
 exchange = ccxt.binance({
-    'apiKey': API_KEY, 
-    'secret': SECRET,
-    'enableRateLimit': True, 
-    'options': {'defaultType': 'future'}
+    'apiKey': API_KEY, 'secret': SECRET,
+    'enableRateLimit': True, 'options': {'defaultType': 'future'}
 })
 
 # ================= HELPERS =================
 def log_activity(message):
-    """Inatunza kumbukumbu kwenye faili la leo la .txt"""
     today = datetime.now().strftime("%Y-%m-%d")
     log_file = f"log_{today}.txt"
     timestamp = datetime.now().strftime("%H:%M:%S")
-    full_message = f"[{timestamp}] {message}"
     try:
         with open(log_file, "a") as f:
-            f.write(full_message + "\n")
-    except:
-        pass
+            f.write(f"[{timestamp}] {message}\n")
+    except: pass
 
 def update_github_sync(status_text):
-    """Inatuma hali ya bot GitHub bila kutumia emoji kuzuia errors"""
     try:
-        with open(STATUS_FILE, "w") as f: 
-            f.write(status_text)
-        
-        log_activity(f"SYSTEM: {status_text}")
-        
+        with open(STATUS_FILE, "w") as f: f.write(status_text)
         os.system("git add .")
         os.system(f'git commit -m "sync update"')
         os.system("git push")
-    except Exception as e:
-        print(f"Sync Error: {e}")
+    except: print("Sync Failed")
 
 def get_data(symbol, timeframe, limit=100):
     bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     df = pd.DataFrame(bars, columns=['time','open','high','low','close','vol'])
     return df
 
-# ================= CORE STRATEGY =================
+# ================= ANALYSIS =================
 def analyze_market():
+    # 15M Trend
     df_15m = get_data(SYMBOL, '15m')
-    ema9 = ta.trend.ema_indicator(df_15m['close'], 9).iloc[-1]
-    ema21 = ta.trend.ema_indicator(df_15m['close'], 21).iloc[-1]
-    trend = "UP" if df_15m['close'].iloc[-1] > ema9 else "DOWN"
+    ema9_15m = ta.trend.ema_indicator(df_15m['close'], 9).iloc[-1]
+    ema21_15m = ta.trend.ema_indicator(df_15m['close'], 21).iloc[-1]
+    is_sideways = abs(ema9_15m - ema21_15m) < (df_15m['close'].iloc[-1] * 0.0003)
+    trend_15m = "SIDEWAYS" if is_sideways else ("UP" if df_15m['close'].iloc[-1] > ema9_15m else "DOWN")
 
+    # 5M Momentum
     df_5m = get_data(SYMBOL, '5m')
-    adx = ta.trend.ADXIndicator(df_5m['high'], df_5m['low'], df_5m['close'], 14).adx().iloc[-1]
+    adx_5m = ta.trend.ADXIndicator(df_5m['high'], df_5m['low'], df_5m['close'], 14).adx().iloc[-1]
+    ema9_5m = ta.trend.ema_indicator(df_5m['close'], 9).iloc[-1]
+    trend_5m = "UP" if df_5m['close'].iloc[-1] > ema9_5m else "DOWN"
 
-    return {"price": df_15m['close'].iloc[-1], "trend": trend, "adx": adx}
+    # 1M Confirmation
+    df_1m = get_data(SYMBOL, '1m')
+    price = df_1m['close'].iloc[-1]
+    
+    return {
+        "price": price, 
+        "trend_15m": trend_15m, 
+        "trend_5m": trend_5m, 
+        "adx_5m": adx_5m
+    }
 
 # ================= MAIN LOOP =================
-print("JASTON MASTER BOT IS STARTING...")
+print("JASTON MASTER TRADE BOT IS ACTIVE...")
 update_github_sync("LIVE")
-log_activity("Bot started successfully")
 
 try:
     while True:
         m = analyze_market()
         os.system('cls' if os.name == 'nt' else 'clear')
         
-        print(f"=== JASTON MASTER TRADE ===")
-        print(f"PRICE: ${m['price']:,.2f}")
-        print(f"TREND: {m['trend']} | ADX: {m['adx']:.1f}")
-        
-        if m['adx'] < 20:
-            status = "Waiting: Side-way Market"
+        print(f"=== JASTON MASTER TRADE BOT ===")
+        print(f"15M TREND: {m['trend_15m']} | 5M TREND: {m['trend_5m']}")
+        print(f"1M: Looking for confirmation...")
+        print(f"PRICE: ${m['price']:,.2f} | 5M ADX: {m['adx_5m']:.1f}")
+        print(f"-------------------------------")
+
+        if m['trend_15m'] == "SIDEWAYS":
+            status = "STATUS: Side-way Market. Waiting for trend..."
+        elif m['adx_5m'] < 20:
+            status = "STATUS: Low Momentum (ADX < 20). Waiting..."
         else:
-            status = f"Scanning: {m['trend']} Trend"
+            status = "STATUS: Trend is fine, waiting for entry..."
             
-        print(f"STATUS: {status}")
-        
-        # Rekodi kila baada ya mzunguko wa uchambuzi
-        log_activity(f"Price: {m['price']} | {status}")
+        print(status)
+        log_activity(f"15M:{m['trend_15m']} | 5M:{m['trend_5m']} | ADX:{m['adx_5m']:.1f} | {status}")
         
         time.sleep(10)
 
@@ -96,4 +99,3 @@ except KeyboardInterrupt:
     print("\nShutting down...")
     update_github_sync("STOPPED")
     log_activity("Bot stopped by user")
-    print("Dashboard updated to OFFLINE.")

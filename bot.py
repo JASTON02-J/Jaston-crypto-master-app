@@ -22,7 +22,7 @@ exchange = ccxt.binance({
 # ================= AUTO-LEVERAGE LOGIC =================
 def get_dynamic_leverage(balance):
     if balance < 10:
-        return 20  # Kwa mtaji wa sasa ($5.5)
+        return 20 
     elif balance < 50:
         return 15
     elif balance < 200:
@@ -55,28 +55,38 @@ def get_data(symbol, timeframe, limit=100):
 
 # ================= ANALYSIS =================
 def analyze_market():
-    # 15M Trend
+    # 15M Trend (Major Direction)
     df_15m = get_data(SYMBOL, '15m')
     ema9_15m = ta.trend.ema_indicator(df_15m['close'], 9).iloc[-1]
     ema21_15m = ta.trend.ema_indicator(df_15m['close'], 21).iloc[-1]
     is_sideways = abs(ema9_15m - ema21_15m) < (df_15m['close'].iloc[-1] * 0.0003)
     trend_15m = "SIDEWAYS" if is_sideways else ("UP" if df_15m['close'].iloc[-1] > ema9_15m else "DOWN")
 
-    # 5M Momentum
+    # 5M Momentum (Strength)
     df_5m = get_data(SYMBOL, '5m')
     adx_5m = ta.trend.ADXIndicator(df_5m['high'], df_5m['low'], df_5m['close'], 14).adx().iloc[-1]
-    
-    # 1M Confirmation Price
+    ema9_5m = ta.trend.ema_indicator(df_5m['close'], 9).iloc[-1]
+    trend_5m = "UP" if df_5m['close'].iloc[-1] > ema9_5m else "DOWN"
+
+    # 1M Confirmation
     df_1m = get_data(SYMBOL, '1m')
     price = df_1m['close'].iloc[-1]
+    ema9_1m = ta.trend.ema_indicator(df_1m['close'], 9).iloc[-1]
+    trend_1m = "UP" if price > ema9_1m else "DOWN"
     
-    return {"price": price, "trend_15m": trend_15m, "adx_5m": adx_5m}
+    return {
+        "price": price, 
+        "trend_15m": trend_15m, 
+        "trend_5m": trend_5m, 
+        "trend_1m": trend_1m,
+        "adx_5m": adx_5m
+    }
 
 # ================= MAIN LOOP =================
 print("JASTON MASTER TRADE BOT IS ACTIVE...")
 update_github_sync("LIVE")
 
-m = {"price": 0, "trend_15m": "SCANNING", "adx_5m": 0}
+m = {"price": 0, "trend_15m": "SCANNING", "trend_5m": "SCANNING", "trend_1m": "SCANNING", "adx_5m": 0}
 counter = 0
 
 try:
@@ -93,23 +103,19 @@ try:
             exchange.set_leverage(current_leverage, SYMBOL)
         except: pass
 
-        # Angalia Open Positions (Njia salama isiyo na AttributeError)
         active_pnl = 0.0
         margin_used = 0.0
         in_trade = False
 
         try:
-            # Binance inatuma taarifa za positions ndani ya balance_info
             for pos in balance_info['info']['positions']:
-                # Tunatoa '/' kwenye BTC/USDT ili kulinganisha na 'BTCUSDT'
                 if pos['symbol'] == SYMBOL.replace('/', ''):
                     amt = float(pos['positionAmt'])
                     if amt != 0:
                         active_pnl = float(pos['unrealizedProfit'])
                         margin_used = (abs(amt) * live_price) / current_leverage
                         in_trade = True
-        except Exception as e:
-            pass # Inashindwa kusoma position kama hakuna trade
+        except: pass
 
         # 2. ANALYSIS SYNC (Kila baada ya mizunguko 10)
         if counter % 10 == 0:
@@ -117,35 +123,52 @@ try:
                 m = analyze_market()
             except: pass
 
-        # 3. DASHBOARD UPDATE (CMD)
+        # 3. DASHBOARD UPDATE (Visual Learning Mode)
         os.system('cls' if os.name == 'nt' else 'clear')
         print(f"🚀 JASTON MASTER TRADE BOT | {datetime.now().strftime('%H:%M:%S')}")
         print(f"--------------------------------------------------")
         print(f"💰 WALLET: {usdt_balance:.2f} USDT | ⚙️ LEVERAGE: {current_leverage}x")
-        print(f"📊 TREND (15M): {m['trend_15m']} | ⚡ ADX (5M): {m['adx_5m']:.1f}")
         print(f"💵 LIVE PRICE: ${live_price:,.2f}")
+        print(f"--------------------------------------------------")
+        
+        # Breakdown ya Market Analysis kwa ajili ya kujifunza
+        t15m_color = "🟢" if m['trend_15m'] == "UP" else ("🔴" if m['trend_15m'] == "DOWN" else "🟡")
+        t5m_color = "🟢" if m['trend_5m'] == "UP" else "🔴"
+        t1m_color = "🟢" if m['trend_1m'] == "UP" else "🔴"
+        
+        print(f"🔍 MARKET DIRECTION:")
+        print(f"   [15M Trend]: {m['trend_15m']} {t15m_color}")
+        print(f"   [5M Momentum]: {m['trend_5m']} {t5m_color} | ADX: {m['adx_5m']:.1f}")
+        print(f"   [1M Status]: {m['trend_1m']} {t1m_color} (Last Entry Scan)")
+        print(f"--------------------------------------------------")
+
+        # Decision Engine Logic Explanation
+        if in_trade:
+            decision = "STATUS: Holding Position. Monitoring SL/TP..."
+        elif m['trend_15m'] == "SIDEWAYS":
+            decision = "DECISION: STAY OUT - Market is Sideways (No Clear Trend)"
+        elif m['adx_5m'] < 20:
+            decision = "DECISION: STAY OUT - Low Volatility (ADX < 20)"
+        elif m['trend_15m'] != m['trend_5m']:
+            decision = f"DECISION: WAITING - 15M ({m['trend_15m']}) and 5M ({m['trend_5m']}) Conflict"
+        else:
+            decision = f"DECISION: SCANNING 1M - Seeking {m['trend_15m']} entry confirmation"
+
+        print(f"🤖 BOT LOGIC: {decision}")
         print(f"--------------------------------------------------")
 
         if in_trade:
             pnl_icon = "🟢" if active_pnl >= 0 else "🔴"
-            print(f"🔥 ACTIVE TRADE DETECTED!")
+            print(f"🔥 ACTIVE TRADE:")
             print(f"   Margin Used: {margin_used:.2f} USDT")
             print(f"   Live PnL: {pnl_icon} {active_pnl:.4f} USDT")
-        else:
-            if m['trend_15m'] == "SIDEWAYS":
-                status = "STATUS: Side-way Market. Waiting..."
-            elif m['adx_5m'] < 20:
-                status = "STATUS: Low Momentum (ADX < 20). Waiting..."
-            else:
-                status = "STATUS: Trend is fine, scanning for entry..."
-            print(status)
-
-        # 4. LOGGING (Kila sekunde 10)
+        
+        # 4. LOGGING & COUNTER
         if counter % 10 == 0:
-            log_activity(f"Bal:{usdt_balance:.2f} | PnL:{active_pnl:.4f} | {m['trend_15m']}")
+            log_activity(f"Price:{live_price} | 15M:{m['trend_15m']} | ADX:{m['adx_5m']:.1f}")
 
         counter += 1
-        time.sleep(1) # REAL-TIME SPEED
+        time.sleep(1)
 
 except KeyboardInterrupt:
     print("\nShutting down...")

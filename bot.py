@@ -2,62 +2,23 @@ import ccxt
 import pandas as pd
 import ta
 import time
-import json
 import os
-import signal
-import sys
+import json
 
-# ================= CONFIG =================
+# ================= CONFIG (API KEY HALISI) =================
 API_KEY = 'UqjUuCgKJvVYVYrs6pmbGNOngRMBKVeVZ6NbUnx2goW7iuneSBaCBLI3hwWlesL8'
 SECRET = 'xv19ZTtg8ArsEZ2F4YB1KAEX5xDBZ4g7eiYM7j7skLBTvkDOwLmTA9xPmMQ1aI8V'
-ACTIVE_FILE = "active_trade.json"
-DATA_FILE = "trade_data.json"
 symbol = 'BTC/USDT'
 timeframe = '1m'
+DATA_FILE = "trade_data.json"
+ACTIVE_FILE = "active_trade.json"
+STATUS_FILE = "bot_status.txt"
 
-BASE_RISK = 0.01
-MAX_RISK = 0.02
-MAX_DAILY_TRADES = 5
-COOLDOWN = 20
-BREAKEVEN_ATR = 1.0
-TRAILING_ATR = 1.5
-TP_RR = 1.5
+# Mipangilio ya Risk
+BASE_RISK = 0.01  # Inatumia 1% ya mtaji wako kwa kila trade
+TRAILING_DISTANCE = 0.5 # Trailing SL inafuata bei kwa 0.5%
 
-# ================= STATE =================
-daily_trades = 0
-last_trade_time = 0
-current_position = None
-
-# ================= FUNCTIONS =================
-def update_status(status):
-    """Inasoma hali ya bot na kuituma GitHub"""
-    with open("bot_status.txt", "w") as f:
-        f.write(status)
-    try:
-        os.system("git add bot_status.txt")
-        os.system(f'git commit -m "Auto-update: {status}"')
-        os.system("git push")
-    except:
-        print("Git push imeshindikana, angalia internet.")
-
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {"wins": 0, "losses": 0, "profit": 0}
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
-
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f)
-
-def handle_exit(sig, frame):
-    print("\nBot inasimamishwa...")
-    update_status("STOPPED")
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, handle_exit)
-
-# ================= EXCHANGE =================
+# Unganisha na Binance Halisi
 exchange = ccxt.binance({
     'apiKey': API_KEY,
     'secret': SECRET,
@@ -65,70 +26,128 @@ exchange = ccxt.binance({
     'options': {'defaultType': 'future'}
 })
 
-# ================= LOGIC =================
-def get_df():
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=120)
-    df = pd.DataFrame(ohlcv, columns=['time','open','high','low','close','volume'])
+# ================= STATE MANAGEMENT =================
+def load_json(file, default):
+    if not os.path.exists(file): return default
+    try:
+        with open(file, "r") as f: return json.load(f)
+    except: return default
+
+def save_json(file, data):
+    with open(file, "w") as f: json.dump(data, f, indent=4)
+
+def update_github_sync(status_text):
+    """Inatuma data GitHub ili ionekane kwenye dashboard yako"""
+    with open(STATUS_FILE, "w") as f:
+        f.write(status_text)
+    # Amri ya haraka ya Git
+    os.system("git add . && git commit -m 'Live Update' && git push")
+
+trade_data = load_json(DATA_FILE, {"wins": 0, "losses": 0, "profit": 0})
+active_trade = load_json(ACTIVE_FILE, None)
+
+# ================= TRADING FUNCTIONS =================
+def get_analysis():
+    bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=50)
+    df = pd.DataFrame(bars, columns=['time','open','high','low','close','vol'])
+    df['rsi'] = ta.momentum.RSIIndicator(df['close'], 14).rsi()
     df['ema9'] = ta.trend.ema_indicator(df['close'], 9)
     df['ema21'] = ta.trend.ema_indicator(df['close'], 21)
-    df['rsi'] = ta.momentum.RSIIndicator(df['close'], 14).rsi()
-    df['atr'] = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], 14).average_true_range()
-    df['adx'] = ta.trend.ADXIndicator(df['high'], df['low'], df['close']).adx()
-    return df
+    return df.iloc[-1]
 
-def strategy(df):
-    last = df.iloc[-1]
-    if last['adx'] < 20: return 'hold', None
-    if last['ema9'] > last['ema21'] and last['rsi'] < 40: return 'buy', last['atr']
-    if last['ema9'] < last['ema21'] and last['rsi'] > 60: return 'sell', last['atr']
-    return 'hold', None
+def open_position(side, price):
+    global active_trade
+    try:
+        balance = exchange.fetch_balance()['total']['USDT']
+        # Hesabu ya kiasi (Inategemea Leverage na Risk)
+        amount = (balance * BASE_RISK) / price 
+        
+        print(f"🚀 EXECUTING LIVE {side.upper()} ORDER...")
+        # AMRI HALISI YA BINANCE (LIVE TRADE)
+        order = exchange.create_market_order(symbol, side, amount)
+        
+        # SL na TP za mwanzo (1.5%)
+        sl = price * 0.985 if side == 'buy' else price * 1.015
+        tp = price * 1.03 if side == 'buy' else price * 0.97
+        
+        active_trade = {
+            'side': side, 'entry': price, 'amount': amount, 
+            'sl': sl, 'tp': tp, 'highest_price': price if side == 'buy' else price,
+            'order_id': order['id']
+        }
+        save_json(ACTIVE_FILE, active_trade)
+        update_github_sync(f"ACTIVE: {side.upper()} @ {price}")
+    except Exception as e:
+        print(f"❌ Imeshindwa kufungua trade: {e}")
 
-def open_trade(signal_type, atr):
-    global current_position, daily_trades, last_trade_time
-    balance = exchange.fetch_balance()['total']['USDT']
-    risk_percent = min(BASE_RISK + (balance / 1000), MAX_RISK)
-    risk_amount = balance * risk_percent
-    price = exchange.fetch_ticker(symbol)['last']
-    sl_distance = atr * 1.2
-    total_amount = risk_amount / sl_distance
-    
-    if signal_type == 'buy':
-        sl, tp = price - sl_distance, price + atr * TP_RR
-    else:
-        sl, tp = price + sl_distance, price - atr * TP_RR
-
-    exchange.create_market_order(symbol, signal_type, total_amount)
-    current_position = {'side': signal_type, 'entry': price, 'sl': sl, 'tp': tp, 'amount': total_amount, 'atr': atr, 'breakeven_done': False}
-    with open(ACTIVE_FILE, "w") as f: json.dump(current_position, f)
-    daily_trades += 1
-    last_trade_time = time.time()
-
-def manage_trade(data):
-    global current_position
-    price = exchange.fetch_ticker(symbol)['last']
-    # Add your trade exit logic here...
-    pass
+def close_position(price):
+    global active_trade, trade_data
+    try:
+        side_to_close = 'sell' if active_trade['side'] == 'buy' else 'buy'
+        print(f"🔒 CLOSING POSITION AT ${price}...")
+        
+        # FUNGA TRADE BINANCE
+        exchange.create_market_order(symbol, side_to_close, active_trade['amount'])
+        
+        pnl = (price - active_trade['entry']) * active_trade['amount'] if active_trade['side'] == 'buy' else (active_trade['entry'] - price) * active_trade['amount']
+        
+        trade_data['profit'] += pnl
+        if pnl > 0: trade_data['wins'] += 1
+        else: trade_data['losses'] += 1
+        
+        save_json(DATA_FILE, trade_data)
+        if os.path.exists(ACTIVE_FILE): os.remove(ACTIVE_FILE)
+        active_trade = None
+        update_github_sync(f"ACTIVE: Profit ${trade_data['profit']:.2f}")
+    except Exception as e:
+        print(f"❌ Imeshindwa kufunga trade: {e}")
 
 # ================= MAIN LOOP =================
-data = load_data()
-print("Bot inaanza...")
-update_status("ACTIVE")
+print("✅ JASTON MASTER BOT IS LIVE ON BINANCE...")
 
 while True:
     try:
-        balance = exchange.fetch_balance()['total']['USDT']
-        if daily_trades >= MAX_DAILY_TRADES:
-            update_status("STOPPED")
-            break
+        last_data = get_analysis()
+        current_price = last_data['close']
         
-        df = get_df()
-        if current_position:
-            manage_trade(data)
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print(f"=== JASTON MASTER TRADE (LIVE BINANCE) ===")
+        print(f"💰 PRICE: ${current_price:,.2f} | RSI: {last_data['rsi']:.1f}")
+        print(f"📈 PROFIT: ${trade_data['profit']:.2f} | W:{trade_data['wins']} L:{trade_data['losses']}")
+        print(f"-------------------------------------------")
+
+        if active_trade:
+            # Trailing Stop Logic
+            if active_trade['side'] == 'buy':
+                if current_price > active_trade['highest_price']:
+                    active_trade['highest_price'] = current_price
+                    new_sl = current_price * (1 - (TRAILING_DISTANCE / 100))
+                    if new_sl > active_trade['sl']: active_trade['sl'] = new_sl
+                
+                if current_price <= active_trade['sl'] or current_price >= active_trade['tp']:
+                    close_position(current_price)
+
+            elif active_trade['side'] == 'sell':
+                if current_price < active_trade['highest_price']:
+                    active_trade['highest_price'] = current_price
+                    new_sl = current_price * (1 + (TRAILING_DISTANCE / 100))
+                    if new_sl < active_trade['sl']: active_trade['sl'] = new_sl
+                
+                if current_price >= active_trade['sl'] or current_price <= active_trade['tp']:
+                    close_position(current_price)
+
+            pnl = (current_price - active_trade['entry']) * active_trade['amount'] if active_trade['side'] == 'buy' else (active_trade['entry'] - current_price) * active_trade['amount']
+            print(f"📡 POS: {active_trade['side'].upper()} | Entry: {active_trade['entry']:.2f}")
+            print(f"🛡️ SL: {active_trade['sl']:.2f} | LIVE PnL: ${pnl:.2f}")
         else:
-            sig, atr = strategy(df)
-            if sig != 'hold': open_trade(sig, atr)
-        
-        time.sleep(10)
+            print("😴 STATUS: Analyzing Market...")
+            # Mkakati wa Entry
+            if last_data['ema9'] > last_data['ema21'] and last_data['rsi'] < 35:
+                open_position('buy', current_price)
+            elif last_data['ema9'] < last_data['ema21'] and last_data['rsi'] > 65:
+                open_position('sell', current_price)
+
+        time.sleep(1) # Refresh kila sekunde 1 kwa ajili ya Live Update
     except Exception as e:
-        print(f"Error: {e}")
-        time.sleep(10)
+        print(f"⚠️ Connection Error: {e}")
+        time.sleep(5)

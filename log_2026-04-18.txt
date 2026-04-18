@@ -7,3 +7,4 @@
 [16:48:17] Price: 75944.2 | Scanning: DOWN Trend
 [16:48:28] Price: 75944.4 | Scanning: DOWN Trend
 [16:48:33] SYSTEM: STOPPED
+[16:48:36] Bot stopped by user

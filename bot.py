@@ -50,44 +50,28 @@ def get_data(symbol, timeframe, limit=100):
 
 # ================= BRAIN: TRIPLE TF + CANDLE =================
 def analyze_market():
-    # 1. 15m TREND
     df_15m = get_data(SYMBOL, '15m')
     ema9_15m = ta.trend.ema_indicator(df_15m['close'], 9).iloc[-1]
     ema21_15m = ta.trend.ema_indicator(df_15m['close'], 21).iloc[-1]
-    
-    # Logic ya Sideways: Kama EMA zimekaribiana sana
     is_sideways_15m = abs(ema9_15m - ema21_15m) < (df_15m['close'].iloc[-1] * 0.0003)
     trend_15m = "SIDEWAYS" if is_sideways_15m else ("UP" if df_15m['close'].iloc[-1] > ema9_15m else "DOWN")
 
-    # 2. 5m MOMENTUM
     df_5m = get_data(SYMBOL, '5m')
     adx_5m = ta.trend.ADXIndicator(df_5m['high'], df_5m['low'], df_5m['close'], 14).adx().iloc[-1]
     ema9_5m = ta.trend.ema_indicator(df_5m['close'], 9).iloc[-1]
     trend_5m = "UP" if df_5m['close'].iloc[-1] > ema9_5m else "DOWN"
 
-    # 3. 1m ENTRY
     df_1m = get_data(SYMBOL, '1m')
     last = df_1m.iloc[-1]
     prev = df_1m.iloc[-2]
-    
     body = abs(last['close'] - last['open'])
     lower_wick = min(last['close'], last['open']) - last['low']
     upper_wick = last['high'] - max(last['close'], last['open'])
-    
     is_bull_signal = (last['close'] > prev['open'] and last['open'] < prev['close']) or (lower_wick > (body * 2))
     is_bear_signal = (last['close'] < prev['open'] and last['open'] > prev['close']) or (upper_wick > (body * 2))
-
     stoch_k = ta.momentum.StochRSIIndicator(df_1m['close'], 14, 3, 3).stochrsi_k().iloc[-1]
 
-    return {
-        "price": last['close'],
-        "trend_15m": trend_15m,
-        "trend_5m": trend_5m,
-        "adx_5m": adx_5m,
-        "stoch_k": stoch_k,
-        "buy_signal": is_bull_signal,
-        "sell_signal": is_bear_signal
-    }
+    return {"price": last['close'], "trend_15m": trend_15m, "trend_5m": trend_5m, "adx_5m": adx_5m, "stoch_k": stoch_k, "buy_signal": is_bull_signal, "sell_signal": is_bear_signal}
 
 trade_data = load_json(DATA_FILE, {"wins": 0, "losses": 0, "profit": 0, "last_loss_time": 0})
 active_trade = load_json(ACTIVE_FILE, None)
@@ -98,13 +82,11 @@ def open_position(side, price, strategy):
         balance = exchange.fetch_balance()['total']['USDT']
         amount = (balance * BASE_RISK) / price 
         exchange.create_market_order(SYMBOL, side, amount)
-        
         sl = price * 0.995 if side == 'buy' else price * 1.005
         tp = price * 1.015 if side == 'buy' else price * 0.985
-        
         active_trade = {'side': side, 'entry': price, 'amount': amount, 'sl': sl, 'tp': tp, 'highest_price': price, 'strategy': strategy}
         save_json(ACTIVE_FILE, active_trade)
-        update_github_sync(f"JASTON MASTER TRADE: ENTERED {side.upper()}")
+        update_github_sync(f"ENTERED {side.upper()} @ {price}")
     except Exception as e: print(f"Entry Error: {e}")
 
 def close_position(price):
@@ -113,34 +95,27 @@ def close_position(price):
         side_to_close = 'sell' if active_trade['side'] == 'buy' else 'buy'
         exchange.create_market_order(SYMBOL, side_to_close, active_trade['amount'])
         pnl = (price - active_trade['entry']) * active_trade['amount'] if active_trade['side'] == 'buy' else (active_trade['entry'] - price) * active_trade['amount']
-        
         trade_data['profit'] += pnl
         if pnl > 0: trade_data['wins'] += 1
         else: trade_data['losses'] += 1; trade_data['last_loss_time'] = time.time()
-        
         save_json(DATA_FILE, trade_data)
         if os.path.exists(ACTIVE_FILE): os.remove(ACTIVE_FILE)
         active_trade = None
-        update_github_sync(f"JASTON MASTER TRADE: CLOSED PNL ${pnl:.2f}")
+        update_github_sync(f"CLOSED PNL: ${pnl:.2f}")
     except Exception as e: print(f"Close Error: {e}")
 
 # ================= MAIN LOOP =================
 print("🚀 JASTON MASTER TRADE BOT IS ACTIVE...")
-
-# --- Huu mstari uliuweka sawa ---
 update_github_sync("Jaston Master Bot is LIVE and Scanning... 🔍")
 
-# --- Hapa ndipo penye kosa, hakikisha pamekaa hivi ---
 try:
     while True:
         m = analyze_market()
         price = m['price']
-        
         os.system('cls' if os.name == 'nt' else 'clear')
         print(f"=== JASTON MASTER TRADE BOT ===")
         print(f"🔵 15M TREND: {m['trend_15m']} | 🟢 5M TREND: {m['trend_5m']}")
         print(f"💰 PRICE: ${price:,.2f} | ⚡ 5M ADX: {m['adx_5m']:.1f}")
-        print(f"📈 PROFIT: ${trade_data['profit']:.2f} | W:{trade_data['wins']} L:{trade_data['losses']}")
         print(f"-------------------------------")
 
         if active_trade:
@@ -152,17 +127,14 @@ try:
                 if price >= active_trade['sl'] or price <= active_trade['tp']: close_position(price)
         else:
             if m['adx_5m'] < MIN_ADX or m['trend_15m'] == "SIDEWAYS":
-                print("😴 STATUS: Side-way Market. Waiting for trend...")
+                print("😴 STATUS: Side-way Market. Waiting...")
             else:
                 if m['trend_15m'] == "UP" and m['trend_5m'] == "UP" and m['stoch_k'] < 30 and m['buy_signal']:
                     open_position('buy', price, "Triple_TF_Buy")
                 elif m['trend_15m'] == "DOWN" and m['trend_5m'] == "DOWN" and m['stoch_k'] > 70 and m['sell_signal']:
                     open_position('sell', price, "Triple_TF_Sell")
-                else:
-                    print("🔍 STATUS: Trend is okay, waiting for 1m Entry Signal...")
-
-        time.sleep(1) # Hapa weka 1 kama ulivyotaka
-        
+                else: print("🔍 STATUS: Waiting for 1m Signal...")
+        time.sleep(1)
 except KeyboardInterrupt:
+    update_github_sync("STOPPED 🛑")
     print("🛑 Stopped.")
-# --- HAKIKISHA HII 'except' IPO HAPA CHINI KABISA ---

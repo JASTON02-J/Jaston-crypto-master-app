@@ -22,7 +22,7 @@ exchange = ccxt.binance({
 # ================= AUTO-LEVERAGE LOGIC =================
 def get_dynamic_leverage(balance):
     if balance < 10:
-        return 20  # Kwa mtaji wako wa sasa ($5.5)
+        return 20  # Kwa mtaji wa sasa ($5.5)
     elif balance < 50:
         return 15
     elif balance < 200:
@@ -70,27 +70,21 @@ def analyze_market():
     df_1m = get_data(SYMBOL, '1m')
     price = df_1m['close'].iloc[-1]
     
-    return {
-        "price": price, 
-        "trend_15m": trend_15m, 
-        "adx_5m": adx_5m
-    }
+    return {"price": price, "trend_15m": trend_15m, "adx_5m": adx_5m}
 
 # ================= MAIN LOOP =================
 print("JASTON MASTER TRADE BOT IS ACTIVE...")
 update_github_sync("LIVE")
 
-# Hizi ni variable za kuanzia (Initial values)
 m = {"price": 0, "trend_15m": "SCANNING", "adx_5m": 0}
 counter = 0
 
 try:
     while True:
-        # 1. REAL-TIME DATA (PnL na Bei kila sekunde)
+        # 1. REAL-TIME DATA
         ticker = exchange.fetch_ticker(SYMBOL)
         live_price = ticker['last']
         
-        # Pata Balance na Leverage
         balance_info = exchange.fetch_balance()
         usdt_balance = balance_info['total']['USDT']
         current_leverage = get_dynamic_leverage(usdt_balance)
@@ -99,21 +93,29 @@ try:
             exchange.set_leverage(current_leverage, SYMBOL)
         except: pass
 
-        # Angalia Open Positions (PnL & Margin)
-        positions = exchange.fetch_derivatives_positions([SYMBOL])
+        # Angalia Open Positions (Njia salama isiyo na AttributeError)
         active_pnl = 0.0
         margin_used = 0.0
         in_trade = False
 
-        for pos in positions:
-            if float(pos['notional']) != 0:
-                active_pnl = float(pos['unrealizedPnl'])
-                margin_used = abs(float(pos['notional'])) / current_leverage
-                in_trade = True
+        try:
+            # Binance inatuma taarifa za positions ndani ya balance_info
+            for pos in balance_info['info']['positions']:
+                # Tunatoa '/' kwenye BTC/USDT ili kulinganisha na 'BTCUSDT'
+                if pos['symbol'] == SYMBOL.replace('/', ''):
+                    amt = float(pos['positionAmt'])
+                    if amt != 0:
+                        active_pnl = float(pos['unrealizedProfit'])
+                        margin_used = (abs(amt) * live_price) / current_leverage
+                        in_trade = True
+        except Exception as e:
+            pass # Inashindwa kusoma position kama hakuna trade
 
-        # 2. ANALYSIS SYNC (Inafanyika kila baada ya mizunguko 10 kuzuia API Ban)
+        # 2. ANALYSIS SYNC (Kila baada ya mizunguko 10)
         if counter % 10 == 0:
-            m = analyze_market()
+            try:
+                m = analyze_market()
+            except: pass
 
         # 3. DASHBOARD UPDATE (CMD)
         os.system('cls' if os.name == 'nt' else 'clear')

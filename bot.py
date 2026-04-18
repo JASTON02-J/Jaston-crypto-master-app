@@ -127,6 +127,13 @@ def close_position(price):
 # ================= MAIN LOOP =================
 print("🚀 JASTON MASTER TRADE BOT IS ACTIVE...")
 
+# --- ONGEZA MSTARI HUU HAPA CHINI ---
+update_github_sync("Jaston Master Bot is LIVE and Scanning... 🔍")
+
+try:
+    while True:
+        m = analyze_market()
+        # ... (code zingine zote zinaendelea hapa)
 try:
     while True:
         m = analyze_market()

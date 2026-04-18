@@ -6,7 +6,7 @@ from streamlit_autorefresh import st_autorefresh
 # ================= MIPANGILIO =================
 st.set_page_config(page_title="JASTON MASTER TRADE", layout="wide")
 # Inajisafisha kila sekunde 5 ili uone faida inavyobadilika
-st_autorefresh(interval=5000, key="datarefresh")
+st_autorefresh(interval=1000, key="datarefresh")
 
 # MAFAILI YA DATA
 DATA_FILE = "trade_data.json"

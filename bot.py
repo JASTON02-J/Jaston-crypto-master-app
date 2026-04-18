@@ -6,7 +6,7 @@ import os
 import json
 from datetime import datetime
 
-# ================= CONFIG (LIVE API KEYS) =================
+# ================= CONFIGURATION =================
 API_KEY = 'dUTfsZjIuDVwHcaIAYwVEJ4n7Te8jHsEeRc2wJencEPxHC0XKygve29qOYpY1Co9'
 SECRET = 'm2h1SRu4tU9wdMdDkqHVII8lpU6qtnCXvajiYOp9uUTxH6iaY37K3fujcOO6IXYh'
 SYMBOL = 'BTC/USDT'
@@ -14,10 +14,7 @@ DATA_FILE = "trade_data.json"
 ACTIVE_FILE = "active_trade.json"
 STATUS_FILE = "bot_status.txt"
 
-# Settings
-BASE_RISK = 0.01          
-MIN_ADX = 20              
-
+# Initialize Exchange
 exchange = ccxt.binance({
     'apiKey': API_KEY, 
     'secret': SECRET,
@@ -25,22 +22,29 @@ exchange = ccxt.binance({
     'options': {'defaultType': 'future'}
 })
 
-# ================= DATA HELPERS =================
-def load_json(file, default):
-    if not os.path.exists(file): return default
+# ================= HELPERS =================
+def log_activity(message):
+    """Inatunza kumbukumbu kwenye faili la leo la .txt"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    log_file = f"log_{today}.txt"
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    full_message = f"[{timestamp}] {message}"
     try:
-        with open(file, "r") as f: return json.load(f)
-    except: return default
-
-def save_json(file, data):
-    with open(file, "w") as f: json.dump(data, f, indent=4)
+        with open(log_file, "a") as f:
+            f.write(full_message + "\n")
+    except:
+        pass
 
 def update_github_sync(status_text):
+    """Inatuma hali ya bot GitHub bila kutumia emoji kuzuia errors"""
     try:
-        # Tumeondoa emoji hapa ili kuzuia charmap error
-        with open(STATUS_FILE, "w") as f: f.write(status_text)
+        with open(STATUS_FILE, "w") as f: 
+            f.write(status_text)
+        
+        log_activity(f"SYSTEM: {status_text}")
+        
         os.system("git add .")
-        os.system(f'git commit -m "update status"')
+        os.system(f'git commit -m "sync update"')
         os.system("git push")
     except Exception as e:
         print(f"Sync Error: {e}")
@@ -50,53 +54,46 @@ def get_data(symbol, timeframe, limit=100):
     df = pd.DataFrame(bars, columns=['time','open','high','low','close','vol'])
     return df
 
-# ================= BRAIN: TRIPLE TF =================
+# ================= CORE STRATEGY =================
 def analyze_market():
     df_15m = get_data(SYMBOL, '15m')
-    ema9_15m = ta.trend.ema_indicator(df_15m['close'], 9).iloc[-1]
-    ema21_15m = ta.trend.ema_indicator(df_15m['close'], 21).iloc[-1]
-    is_sideways_15m = abs(ema9_15m - ema21_15m) < (df_15m['close'].iloc[-1] * 0.0003)
-    trend_15m = "SIDEWAYS" if is_sideways_15m else ("UP" if df_15m['close'].iloc[-1] > ema9_15m else "DOWN")
+    ema9 = ta.trend.ema_indicator(df_15m['close'], 9).iloc[-1]
+    ema21 = ta.trend.ema_indicator(df_15m['close'], 21).iloc[-1]
+    trend = "UP" if df_15m['close'].iloc[-1] > ema9 else "DOWN"
 
     df_5m = get_data(SYMBOL, '5m')
-    adx_5m = ta.trend.ADXIndicator(df_5m['high'], df_5m['low'], df_5m['close'], 14).adx().iloc[-1]
-    ema9_5m = ta.trend.ema_indicator(df_5m['close'], 9).iloc[-1]
-    trend_5m = "UP" if df_5m['close'].iloc[-1] > ema9_5m else "DOWN"
+    adx = ta.trend.ADXIndicator(df_5m['high'], df_5m['low'], df_5m['close'], 14).adx().iloc[-1]
 
-    df_1m = get_data(SYMBOL, '1m')
-    stoch_k = ta.momentum.StochRSIIndicator(df_1m['close'], 14, 3, 3).stochrsi_k().iloc[-1]
-
-    return {"price": df_1m['close'].iloc[-1], "trend_15m": trend_15m, "trend_5m": trend_5m, "adx_5m": adx_5m, "stoch_k": stoch_k}
-
-trade_data = load_json(DATA_FILE, {"wins": 0, "losses": 0, "profit": 0})
-active_trade = load_json(ACTIVE_FILE, None)
+    return {"price": df_15m['close'].iloc[-1], "trend": trend, "adx": adx}
 
 # ================= MAIN LOOP =================
-print("JASTON MASTER TRADE BOT IS ACTIVE...")
+print("JASTON MASTER BOT IS STARTING...")
 update_github_sync("LIVE")
+log_activity("Bot started successfully")
 
 try:
     while True:
         m = analyze_market()
-        price = m['price']
         os.system('cls' if os.name == 'nt' else 'clear')
-        print(f"=== JASTON MASTER TRADE BOT ===")
-        print(f"15M TREND: {m['trend_15m']} | 5M TREND: {m['trend_5m']}")
-        print(f"PRICE: ${price:,.2f} | 5M ADX: {m['adx_5m']:.1f}")
-        print(f"-------------------------------")
-
-        if active_trade:
-            pass
+        
+        print(f"=== JASTON MASTER TRADE ===")
+        print(f"PRICE: ${m['price']:,.2f}")
+        print(f"TREND: {m['trend']} | ADX: {m['adx']:.1f}")
+        
+        if m['adx'] < 20:
+            status = "Waiting: Side-way Market"
         else:
-            if m['adx_5m'] < MIN_ADX or m['trend_15m'] == "SIDEWAYS":
-                print("STATUS: Side-way Market. Waiting...")
-            else:
-                print("STATUS: Trend is okay, waiting for entry...")
-
-        time.sleep(1)
+            status = f"Scanning: {m['trend']} Trend"
+            
+        print(f"STATUS: {status}")
+        
+        # Rekodi kila baada ya mzunguko wa uchambuzi
+        log_activity(f"Price: {m['price']} | {status}")
+        
+        time.sleep(10)
 
 except KeyboardInterrupt:
     print("\nShutting down...")
-    # Tumeandika STOPPED bila emoji ili ikubaliwe na Windows CMD
-    update_github_sync("STOPPED") 
+    update_github_sync("STOPPED")
+    log_activity("Bot stopped by user")
     print("Dashboard updated to OFFLINE.")

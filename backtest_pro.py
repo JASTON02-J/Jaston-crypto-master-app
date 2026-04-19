@@ -20,14 +20,13 @@ bars = exchange.fetch_ohlcv(SYMBOL, timeframe='1m', limit=5000)
 df = pd.DataFrame(bars, columns=['time', 'open', 'high', 'low', 'close', 'vol'])
 df['time'] = pd.to_datetime(df['time'], unit='ms')
 
-# ================= INDICATORS (TRIPLE-TF) =================
+# ================= INDICATORS =================
 df['ema9_15m'] = ta.trend.ema_indicator(df['close'], window=135)
 df['ema21_15m'] = ta.trend.ema_indicator(df['close'], window=315)
 df['adx_5m'] = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], window=70).adx()
 df['ema9_5m'] = ta.trend.ema_indicator(df['close'], window=45)
-# Tumeongeza EMA21 kwa ajili ya Exit salama zaidi
 df['ema9_1m'] = ta.trend.ema_indicator(df['close'], window=9)
-df['ema21_1m'] = ta.trend.ema_indicator(df['close'], window=21)
+df['ema21_1m'] = ta.trend.ema_indicator(df['close'], window=21) # Smoother Exit for PnL safety
 
 # ================= ENGINE =================
 trade_log = []
@@ -50,13 +49,17 @@ for i in range(1, len(df)):
             entry_time = df['time'].iloc[i]
 
     elif in_position:
-        # BORESHA EXIT: Tunatumia EMA 21 badala ya 9 ili kuipa trade nafasi
-        exit_long = (position_type == "LONG" and price < df['ema21_1m'].iloc[i])
-        exit_short = (position_type == "SHORT" and price > df['ema21_1m'].iloc[i])
+        # Piga hesabu ya PnL ya sasa hivi (Current floating PnL)
+        raw_pnl = (price - entry_price)/entry_price if position_type=="LONG" else (entry_price - price)/entry_price
         
-        if exit_long or exit_short:
-            raw_pnl = (price - entry_price)/entry_price if position_type=="LONG" else (entry_price - price)/entry_price
-            # Piga hesabu ya PnL kwa kutumia 20x leverage
+        # 1. Exit ikigusa EMA 21 (Stop Signal)
+        exit_ema = (position_type == "LONG" and price < df['ema21_1m'].iloc[i]) or \
+                   (position_type == "SHORT" and price > df['ema21_1m'].iloc[i])
+        
+        # 2. Take Profit: Funga ikifikia 15% ya faida (Return on Margin)
+        take_profit = (raw_pnl * LEVERAGE) >= 0.15 
+        
+        if exit_ema or take_profit:
             trade_pnl_usdt = (current_wallet * 0.5) * raw_pnl * LEVERAGE 
             current_wallet += trade_pnl_usdt
             

@@ -19,105 +19,63 @@ exchange = ccxt.binance({
     'options': {'defaultType': 'future'}
 })
 
-# ================= FILES =================
-MEMORY_FILE = "market_memory.json"
-DASHBOARD_FILE = "dashboard.json"
-
 # ================= MEMORY =================
+MEMORY_FILE = "market_memory.json"
+
 def load_memory():
     if os.path.exists(MEMORY_FILE):
-        try:
-            with open(MEMORY_FILE, "r") as f:
-                return json.load(f)
-        except:
-            return {}
+        return json.load(open(MEMORY_FILE))
     return {}
 
 def save_memory(data):
-    try:
-        with open(MEMORY_FILE, "w") as f:
-            json.dump(data, f, indent=4)
-    except Exception as e:
-        print("Memory save error:", e)
+    with open(MEMORY_FILE, "w") as f:
+        json.dump(data, f)
 
 memory = load_memory()
 
-# ================= DASHBOARD =================
-def update_dashboard(results, best, status="ON"):
-    try:
-        dashboard = {
-            "time": datetime.now().strftime('%H:%M:%S'),
-            "status": status,
-            "results": results,
-            "best": best,
-            "balance": 1000,  # replace later with real balance
-            "pnl": 0,
-            "trades": []
-        }
-
-        with open(DASHBOARD_FILE, "w") as f:
-            json.dump(dashboard, f, indent=4)
-
-    except Exception as e:
-        print("Dashboard write error:", e)
-
-# ================= SAFE FETCH =================
-def fetch_ohlcv_safe(symbol, retries=3):
-    for i in range(retries):
-        try:
-            data = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=100)
-            if data and len(data) > 50:
-                return data
-        except Exception as e:
-            print(f"{symbol} fetch error:", e)
-        time.sleep(2)
-    return None
-
-# ================= ANALYSIS =================
+# ================= SCAN FUNCTION =================
 def analyze_market(symbol):
     try:
-        bars = fetch_ohlcv_safe(symbol)
-
-        if bars is None:
-            raise Exception("No data")
-
+        bars = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=100)
         df = pd.DataFrame(bars, columns=['t','o','h','l','c','v'])
-        df[['o','h','l','c','v']] = df[['o','h','l','c','v']].astype(float)
 
-        # Indicators
         df['ema9'] = ta.trend.ema_indicator(df['c'], 9)
         df['ema21'] = ta.trend.ema_indicator(df['c'], 21)
         df['rsi'] = ta.momentum.RSIIndicator(df['c'], 14).rsi()
         df['adx'] = ta.trend.ADXIndicator(df['h'], df['l'], df['c'], 14).adx()
 
-        ema9 = df['ema9'].dropna().iloc[-1]
-        ema21 = df['ema21'].dropna().iloc[-1]
-        rsi = df['rsi'].dropna().iloc[-1]
-        adx = df['adx'].dropna().iloc[-1]
+        ema_up = df['ema9'].iloc[-1] > df['ema21'].iloc[-1]
+        ema_down = df['ema9'].iloc[-1] < df['ema21'].iloc[-1]
 
+        rsi = df['rsi'].iloc[-1]
+        adx = df['adx'].iloc[-1]
+
+        # ================= SCORE ENGINE =================
         score = 0
         if adx > 20:
             score += 1
         if rsi > 55 or rsi < 45:
             score += 1
-        if ema9 > ema21 or ema9 < ema21:
+        if ema_up or ema_down:
             score += 1
 
         confidence = (score / 3) * 100
 
-        signal = "OPPORTUNITY 🚀" if confidence >= 70 else "NO OPPORTUNITY ❌"
+        if confidence >= 70:
+            signal = "OPPORTUNITY 🚀"
+        else:
+            signal = "NO OPPORTUNITY ❌"
 
         return {
             "symbol": symbol.replace("/USDT", ""),
-            "price": float(df['c'].iloc[-1]),
+            "price": df['c'].iloc[-1],
             "confidence": confidence,
             "signal": signal,
             "rsi": rsi,
             "adx": adx
         }
 
-    except Exception as e:
-        print(symbol, "analysis error:", e)
+    except:
         return {
             "symbol": symbol.replace("/USDT", ""),
             "price": 0,
@@ -128,49 +86,45 @@ def analyze_market(symbol):
         }
 
 # ================= MAIN LOOP =================
-def run_bot():
-    print("🚀 BOT STARTED...")
+while True:
+    try:
+        results = []
 
-    while True:
-        try:
-            results = []
+        for s in SYMBOLS:
+            results.append(analyze_market(s))
 
-            for symbol in SYMBOLS:
-                res = analyze_market(symbol)
-                results.append(res)
-                time.sleep(1)
+        best = max(results, key=lambda x: x["confidence"])
 
-            valid = [r for r in results if r["confidence"] > 0]
+        os.system('cls' if os.name == 'nt' else 'clear')
 
-            best = max(valid, key=lambda x: x["confidence"]) if valid else results[0]
+        print(f"🚀 MULTI-MARKET AI SCANNER | {datetime.now().strftime('%H:%M:%S')}")
+        print("------------------------------------------------------------------")
 
-            # Clear console
-            os.system('cls' if os.name == 'nt' else 'clear')
+        # ================= MARKET LIST =================
+        for r in results:
+            print(f"{r['symbol']}: {r['signal']} | Conf: {r['confidence']:.1f}% | RSI {r['rsi']:.1f} | ADX {r['adx']:.1f}")
 
-            print(f"TIME: {datetime.now().strftime('%H:%M:%S')}")
-            print("==========================================")
+        print("------------------------------------------------------------------")
 
-            for r in results:
-                print(f"{r['symbol']} | {r['signal']} | {r['confidence']:.1f}%")
+        # ================= BEST MARKET =================
+        print(f"🔥 BEST MARKET: {best['symbol']}")
+        print(f"📊 SIGNAL: {best['signal']}")
+        print(f"🎯 CONFIDENCE: {best['confidence']:.1f}%")
 
-            print("==========================================")
-            print(f"BEST: {best['symbol']} | {best['confidence']:.1f}%")
+        # ================= GLOBAL STATUS =================
+        if best['confidence'] >= 70:
+            print(f"🟢 ACTION: TRADE {best['symbol']} NOW 🚀")
+        else:
+            print("🔴 ACTION: NO CLEAR SETUP ❌")
 
-            # Save memory
-            memory["last_scan"] = datetime.now().strftime('%H:%M:%S')
-            memory["best"] = best
-            save_memory(memory)
+        print("------------------------------------------------------------------")
 
-            # Update dashboard
-            update_dashboard(results, best, status="ON")
+        # save memory
+        memory["last_scan"] = datetime.now().strftime('%H:%M:%S')
+        memory["best_market"] = best
+        save_memory(memory)
 
-            time.sleep(10)
+        time.sleep(10)
 
-        except Exception as e:
-            print("MAIN ERROR:", e)
-            update_dashboard([], {}, status="OFF")
-            time.sleep(10)
-
-# ================= RUN =================
-if __name__ == "__main__":
-    run_bot()
+    except Exception:
+        time.sleep(10)

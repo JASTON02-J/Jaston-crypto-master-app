@@ -1,3 +1,49 @@
 {
-    "status": "STOPPED"
+    "time": "00:15:02",
+    "status": "ON",
+    "results": [
+        {
+            "symbol": "BTC",
+            "price": 74652.1,
+            "confidence": 66.66666666666666,
+            "signal": "NO OPPORTUNITY \u274c",
+            "rsi": 45.1587026258187,
+            "adx": 26.961835609834537
+        },
+        {
+            "symbol": "ETH",
+            "price": 2284.84,
+            "confidence": 100.0,
+            "signal": "OPPORTUNITY \ud83d\ude80",
+            "rsi": 44.009725957863665,
+            "adx": 28.19484592269416
+        },
+        {
+            "symbol": "SOL",
+            "price": 85.05,
+            "confidence": 33.33333333333333,
+            "signal": "NO OPPORTUNITY \u274c",
+            "rsi": 48.169892070085076,
+            "adx": 14.126500544617642
+        },
+        {
+            "symbol": "BNB",
+            "price": 622.21,
+            "confidence": 33.33333333333333,
+            "signal": "NO OPPORTUNITY \u274c",
+            "rsi": 51.8228396853427,
+            "adx": 11.728197227667764
+        }
+    ],
+    "best": {
+        "symbol": "ETH",
+        "price": 2284.84,
+        "confidence": 100.0,
+        "signal": "OPPORTUNITY \ud83d\ude80",
+        "rsi": 44.009725957863665,
+        "adx": 28.19484592269416
+    },
+    "balance": 1000,
+    "pnl": 0,
+    "trades": []
 }

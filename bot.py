@@ -7,8 +7,8 @@ import json
 from datetime import datetime
 
 # ================= CONFIGURATION =================
-API_KEY = 'WEKA_API_KEY_YAKO'
-SECRET = 'WEKA_SECRET_YAKO'
+API_KEY = 'dUTfsZjIuDVwHcaIAYwVEJ4n7Te8jHsEeRc2wJencEPxHC0XKygve29qOYpY1Co9'
+SECRET = 'm2h1SRu4tU9wdMdDkqHVII8lpU6qtnCXvajiYOp9uUTxH6iaY37K3fujcOO6IXYh'
 SYMBOL = 'BTC/USDT'
 
 exchange = ccxt.binance({

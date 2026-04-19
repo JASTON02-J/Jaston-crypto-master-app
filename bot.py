@@ -40,23 +40,15 @@ os.system('cls' if os.name == 'nt' else 'clear')
 
 while True:
     try:
-        # 1. Fetch Account Data
         ticker = exchange.fetch_ticker(SYMBOL)
         live_price = ticker['last']
         balance = exchange.fetch_balance()
         usdt_balance = balance['total'].get('USDT', 0.0)
         
-        # 2. Get Analysis
-        df15 = get_data(SYMBOL, '15m')
-        df5 = get_data(SYMBOL, '5m')
-        df1 = get_data(SYMBOL, '1m')
-        
-        sig15 = get_signal(df15)
-        sig5 = get_signal(df5)
-        sig1 = get_signal(df1)
+        df15, df5, df1 = get_data(SYMBOL, '15m'), get_data(SYMBOL, '5m'), get_data(SYMBOL, '1m')
+        sig15, sig5, sig1 = get_signal(df15), get_signal(df5), get_signal(df1)
         adx5 = ta.trend.ADXIndicator(df5['high'], df5['low'], df5['close'], 14).adx().iloc[-1] if df5 is not None else 0
 
-        # 3. Position Monitoring
         in_trade, active_pnl, side, margin_used, current_lev = False, 0.0, None, 0.0, 20
         for pos in balance['info'].get('positions', []):
             if pos['symbol'] == SYMBOL.replace('/', ''):
@@ -67,24 +59,22 @@ while True:
                     active_pnl = float(pos['unrealizedProfit'])
                     margin_used = (abs(amt) * live_price) / current_lev
 
-        # 4. JSON DATA SYNC (For App.py)
+        # FAST SYNC DATA (Every loop)
         trade_data = {
             "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "wallet": usdt_balance,
-            "price": live_price,
-            "leverage": current_lev,
+            "wallet": usdt_balance, "price": live_price, "leverage": current_lev,
             "sig15": sig15, "sig5": sig5, "sig1": sig1, "adx": adx5,
             "in_trade": in_trade, "side": side, "pnl": active_pnl, "margin": margin_used,
-            "history": [] # Trades are logged here
+            "history": [] 
         }
         with open("data.json", "w") as f:
             json.dump(trade_data, f)
 
-        # Sync to GitHub every 30 seconds (to avoid git lock)
-        if counter % 10 == 0:
-            os.system("git add data.json && git commit -m 'sync' && git push origin master")
+        # GIT SYNC (Every 2 loops ~ 6 seconds)
+        if counter % 2 == 0:
+            os.system("git add data.json && git commit -m 'sync' --quiet && git push origin master --quiet")
 
-        # 5. CMD DASHBOARD (Mwonekano ule ule ulioupenda)
+        # CMD DASHBOARD
         os.system('cls' if os.name == 'nt' else 'clear')
         print(f"🚀 JASTON MASTER PRO | {datetime.now().strftime('%H:%M:%S')}")
         print(f"💰 WALLET: ${usdt_balance:.2f} | LEVERAGE: {current_lev}x")
@@ -105,4 +95,4 @@ while True:
         time.sleep(3)
     except Exception as e:
         print(f"❌ Error: {e}")
-        time.sleep(10)
+        time.sleep(5)

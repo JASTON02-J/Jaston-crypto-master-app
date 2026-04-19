@@ -1,1 +1,1 @@
-{"status": "ONLINE", "timestamp": "2026-04-19 15:05:46", "wallet": 0.0, "margin_balance": 0.0, "price": 75559.1, "t15": "UP", "t5": "UP", "t1": "UP", "in_trade": false, "side": "NONE", "pnl": 0.0, "reason": "Ready for UP Signal"}
+{"status": "ONLINE", "timestamp": "2026-04-19 15:07:51", "wallet": 0.0, "margin_balance": 0.0, "price": 75589.8, "t15": "UP", "t5": "UP", "t1": "SIDE", "in_trade": false, "side": "NONE", "pnl": 0.0, "reason": "Waiting for EMA alignment"}

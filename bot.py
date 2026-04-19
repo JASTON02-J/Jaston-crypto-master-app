@@ -16,97 +16,69 @@ exchange = ccxt.binance({
     'enableRateLimit': True, 'options': {'defaultType': 'future'}
 })
 
-# Masuala ya History & PnL
 session_history = []
 total_session_pnl = 0.0
-last_position_side = None
 
-def get_data(symbol, timeframe='15m', limit=100):
+def get_analysis(symbol, timeframe):
     try:
-        bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=50)
         df = pd.DataFrame(bars, columns=['time','open','high','low','close','vol'])
-        df['ema9'] = ta.trend.ema_indicator(df['close'], 9)
-        df['ema21'] = ta.trend.ema_indicator(df['close'], 21)
-        return df
-    except: return None
-
-def get_signal(df):
-    if df is None: return "SIDE"
-    last = df.iloc[-1]
-    if last['close'] > last['ema9'] > last['ema21']: return "UP"
-    if last['close'] < last['ema9'] < last['ema21']: return "DOWN"
-    return "SIDE"
-
-counter = 0
-os.system('cls' if os.name == 'nt' else 'clear')
+        ema9 = ta.trend.ema_indicator(df['close'], 9).iloc[-1]
+        ema21 = ta.trend.ema_indicator(df['close'], 21).iloc[-1]
+        adx = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], 14).adx().iloc[-1]
+        close = df['close'].iloc[-1]
+        cross = "BULLISH" if ema9 > ema21 else "BEARISH"
+        trend = "UP" if (close > ema9 and cross == "BULLISH") else "DOWN" if (close < ema9 and cross == "BEARISH") else "SIDE"
+        return trend, round(adx, 1), cross
+    except: return "SIDE", 0, "Wait"
 
 while True:
     try:
         ticker = exchange.fetch_ticker(SYMBOL)
         live_price = ticker['last']
         balance = exchange.fetch_balance()
-        usdt_balance = balance['total'].get('USDT', 0.0)
+        usdt = balance['total'].get('USDT', 0.0)
         
-        df15, df1 = get_data(SYMBOL, '15m'), get_data(SYMBOL, '1m')
-        sig15, sig1 = get_signal(df15), get_signal(df1)
+        # ANALYSIS
+        t15, a15, c15 = get_analysis(SYMBOL, '15m')
+        t5, a5, c5 = get_analysis(SYMBOL, '5m')
+        t1, a1, c1 = get_analysis(SYMBOL, '1m')
 
-        # Position Monitoring
-        in_trade, active_pnl, side, margin_used = False, 0.0, None, 0.0
+        # POSITION MONITOR
+        in_t, pnl, side, marg = False, 0.0, None, 0.0
         for pos in balance['info'].get('positions', []):
             if pos['symbol'] == SYMBOL.replace('/', ''):
                 amt = float(pos['positionAmt'])
                 if amt != 0:
-                    in_trade, side = True, ("LONG" if amt > 0 else "SHORT")
-                    active_pnl = float(pos['unrealizedProfit'])
-                    margin_used = (abs(amt) * live_price) / int(pos['leverage'])
-                    last_position_side = side
+                    in_t, side = True, ("LONG" if amt > 0 else "SHORT")
+                    pnl = float(pos['unrealizedProfit'])
+                    marg = (abs(amt) * live_price) / int(pos['leverage'])
 
-        # Log History if trade closes (Simple Logic)
-        if not in_trade and last_position_side is not None:
-            # Hapa tunachukulia trade imefungwa
-            trade_record = {
-                "Time": datetime.now().strftime('%H:%M:%S'),
-                "Side": last_position_side,
-                "Result": "CLOSED"
-            }
-            session_history.insert(0, trade_record)
-            last_position_side = None
-
-        # PREPARE DATA FOR APP
+        # PREPARE DATA
         trade_data = {
             "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "wallet": usdt_balance,
-            "price": live_price,
-            "sig15": sig15,
-            "sig1": sig1,
-            "in_trade": in_trade,
-            "side": side,
-            "pnl": active_pnl,
-            "margin": margin_used,
-            "total_pnl": total_session_pnl,
-            "history": session_history[:5] # Tuma trade 5 za mwisho tu
+            "wallet": usdt, "price": live_price, "total_pnl": total_session_pnl,
+            "sig15": t15, "adx15": a15, "cross15": c15,
+            "sig5": t5, "adx5": a5, "cross5": c5,
+            "sig1": t1, "adx1": a1, "cross1": c1,
+            "in_trade": in_t, "side": side, "pnl": pnl, "margin": marg,
+            "history": session_history[:5]
         }
         
         with open("data.json", "w") as f:
             json.dump(trade_data, f)
 
-        # FAST SYNC TO GITHUB (Every 3 loops ~ 10 seconds)
-        if counter % 3 == 0:
-            os.system("git add data.json && git commit -m 'sync' --quiet && git push origin master --quiet")
+        # ULTRA FAST SYNC (Sekunde 1-2 kurekodi na kupandisha)
+        os.system("git add data.json && git commit -m 'sync' --quiet && git push origin master --quiet")
 
-        # CMD DASHBOARD
+        # UI CMD
         os.system('cls' if os.name == 'nt' else 'clear')
-        print(f"🚀 JASTON MASTER PRO | {datetime.now().strftime('%H:%M:%S')}")
-        print(f"💰 WALLET: ${usdt_balance:.2f} | BTC: ${live_price:,.2f}")
-        print("-" * 50)
-        print(f"📊 ANALYSIS: 15M:{sig15} | 1M:{sig1}")
-        if in_trade:
-            print(f"🔥 ACTIVE: {side} | PnL: {active_pnl:+.4f}")
-        else:
-            print("📡 STATUS: SCANNING...")
-
-        counter += 1
-        time.sleep(3)
+        print(f"🚀 JASTON ENGINE | DAR: {trade_data['timestamp']}")
+        print(f"💰 WALLET: ${usdt:.2f} | BTC: ${live_price:,.2f}")
+        print("-" * 55)
+        print(f"15M: {t15} | 5M: {t5} | 1M: {t1}")
+        print("-" * 55)
+        
+        time.sleep(1) # Tunazunguka kila sekunde 1 kwa ajili ya kasi ya ajabu
     except Exception as e:
-        print(f"Error: {e}")
-        time.sleep(5)
+        time.sleep(2)

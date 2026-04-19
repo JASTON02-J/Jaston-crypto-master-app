@@ -19,18 +19,16 @@ exchange = ccxt.binance({
     'options': {'defaultType': 'future'}
 })
 
-# Kazi ya kutuma status ya OFFLINE bot ikizimwa
 def signal_offline():
-    print("\n⚠️ Bot inazimwa... Inatuma status ya OFFLINE GitHub...")
-    offline_data = {"status": "OFFLINE", "timestamp": "2000-01-01 00:00:00"}
-    with open("data.json", "w") as f:
-        json.dump(offline_data, f)
-    os.system("git add data.json && git commit -m 'Bot Offline' --quiet && git push origin master --quiet")
+    print("\n⚠️ BOT STOPPED. Syncing status...")
+    offline_data = {"status": "STOPPED", "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    with open("data.json", "w") as f: json.dump(offline_data, f)
+    # Amri rahisi ya Git isiyo na maneno mengi
+    os.system("git add . && git commit -m 'offline' --quiet && git push origin master --quiet")
 
 atexit.register(signal_offline)
 
 # ================= MAIN LOOP =================
-counter = 0
 while True:
     try:
         ticker = exchange.fetch_ticker(SYMBOL)
@@ -48,7 +46,7 @@ while True:
         
         trend = "UP" if live_price > ema9 > ema21 else "DOWN" if live_price < ema9 < ema21 else "SIDE"
 
-        in_trade, side, pnl_pct, margin_used, entry_p = False, "NONE", 0.0, 0.0, 0.0
+        in_trade, side, pnl_pct, margin_used = False, "NONE", 0.0, 0.0
         for pos in balance['info'].get('positions', []):
             if pos['symbol'] == SYMBOL.replace('/', ''):
                 amt = float(pos['positionAmt'])
@@ -60,34 +58,28 @@ while True:
                     pnl_pct = dist * lev if side == "LONG" else -dist * lev
                     margin_used = (abs(amt) * live_price) / lev
 
-        # CMD DISPLAY
+        # CMD DISPLAY (CLEAN)
         os.system('cls' if os.name == 'nt' else 'clear')
-        print(f"🚀 JASTON MASTER TRADE | {datetime.now().strftime('%H:%M:%S')}")
+        print(f"🚀 JASTON MASTER PRO | {datetime.now().strftime('%H:%M:%S')}")
         print(f"💰 WALLET: ${usdt_total:.2f} | MARGIN: ${margin_balance:.2f}")
         print(f"💵 BTC PRICE: ${live_price:,.2f} | ADX: {adx:.1f}")
-        print("-" * 60)
+        print("-" * 50)
         print(f"📊 TREND 15M: {trend} | STATUS: ONLINE")
-        
-        if in_trade:
-            print(f"✅ TRADE EXECUTED: {side} | PnL: {pnl_pct:+.2f}%")
-        else:
-            print("📡 STATUS: SCANNING MARKET...")
+        if in_trade: print(f"✅ EXECUTED: {side} | PnL: {pnl_pct:+.2f}%")
+        print("-" * 50)
 
-        # SAVE DATA
+        # SAVE DATA (Safe format)
         data = {
             "status": "ONLINE",
             "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             "wallet": usdt_total, "margin_balance": margin_balance,
             "price": live_price, "trend": trend, "adx": adx,
             "in_trade": in_trade, "side": side, "pnl": pnl_pct, "margin_used": margin_used,
-            "reason": "Waiting for signal alignment..."
+            "reason": "Scanning..."
         }
         with open("data.json", "w") as f: json.dump(data, f)
         
-        # PUSH TO GIT (Tumia doti . kuzuia pathspec error)
         os.system("git add . && git commit -m 'sync' --quiet && git push origin master --quiet")
-        
-        time.sleep(10) # Dakika 5 ni nyingi sana kiongozi, nimeiweka sekunde 10 kwa wepesi
+        time.sleep(10)
     except Exception as e:
-        print(f"Error: {e}")
         time.sleep(5)

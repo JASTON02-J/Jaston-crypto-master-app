@@ -38,33 +38,30 @@ def save_history(side, entry, pnl):
     
     history.append(new_entry)
     with open(history_file, 'w') as f:
-        json.dump(history[-10:], f) # Tunatunza trades 10 tu za mwisho
+        json.dump(history[-10:], f)
 
 # ================= MAIN LOOP =================
 counter = 0
-last_trade_state = False # Kujua kama trade imefungwa
-
 while True:
     try:
         ticker = exchange.fetch_ticker(SYMBOL)
         live_price = ticker['last']
         balance = exchange.fetch_balance()
         
-        # Pata Wallet na Margin Balance
+        # Balance Info
         usdt_total = balance['total'].get('USDT', 0.0)
         margin_balance = float(balance['info']['assets'][0]['marginBalance']) if 'info' in balance else usdt_total
         
-        # Uchambuzi
+        # Technical Analysis (15M)
         df15 = exchange.fetch_ohlcv(SYMBOL, timeframe='15m', limit=50)
-        df15 = pd.DataFrame(df15, columns=['t','o','h','l','c','v'])
-        ema9 = ta.trend.ema_indicator(df15['c'], 9).iloc[-1]
-        ema21 = ta.trend.ema_indicator(df15['c'], 21).iloc[-1]
-        adx = ta.trend.ADXIndicator(df15['h'], df15['l'], df15['c']).adx().iloc[-1]
+        df = pd.DataFrame(df15, columns=['t','o','h','l','c','v'])
+        ema9 = ta.trend.ema_indicator(df['c'], 9).iloc[-1]
+        ema21 = ta.trend.ema_indicator(df['c'], 21).iloc[-1]
+        adx = ta.trend.ADXIndicator(df['h'], df['l'], df['c']).adx().iloc[-1]
         
-        # Trends logic
         trend = "UP" if live_price > ema9 > ema21 else "DOWN" if live_price < ema9 < ema21 else "SIDE"
 
-        # Position Info
+        # Position Tracking
         in_trade, side, pnl_pct, margin_used, entry_p = False, "NONE", 0.0, 0.0, 0.0
         for pos in balance['info'].get('positions', []):
             if pos['symbol'] == SYMBOL.replace('/', ''):
@@ -77,13 +74,7 @@ while True:
                     pnl_pct = dist * lev if side == "LONG" else -dist * lev
                     margin_used = (abs(amt) * live_price) / lev
 
-        # Record History trade ikifungwa
-        if last_trade_state == True and in_trade == False:
-             # Hapa unaweza kuongeza logic ya kurekodi trade iliyopita
-             pass
-        last_trade_state = in_trade
-
-        # CMD DISPLAY (Dashboard yako ya sasa)
+        # CMD DASHBOARD
         os.system('cls' if os.name == 'nt' else 'clear')
         print(f"🚀 JASTON MASTER PRO | {datetime.now().strftime('%H:%M:%S')}")
         print(f"💰 WALLET: ${usdt_total:.2f} | MARGIN: ${margin_balance:.2f}")
@@ -95,10 +86,10 @@ while True:
             print(f"✅ TRADE EXECUTED: {side} | ENTRY: {entry_p:,.2f}")
             print(f"📈 LIVE PnL: {pnl_pct:+.2f}% | MARGIN USED: ${margin_used:.2f}")
         else:
-            print("💡 REASON: Waiting for signal alignment...")
+            print("💡 REASON: Waiting for EMA & Trend alignment...")
         print("-" * 60)
 
-        # SAVE DATA FOR APP
+        # SAVE DATA
         data = {
             "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             "wallet": usdt_total, "margin_balance": margin_balance,
@@ -107,8 +98,8 @@ while True:
         }
         with open("data.json", "w") as f: json.dump(data, f)
         
-        # PUSH TO GIT
-        os.system("git add data.json history.json && git commit -m 'sync' --quiet && git push origin master --quiet")
+        # PUSH TO GIT (Fixed with *.json)
+        os.system("git add *.json && git commit -m 'sync data' --quiet && git push origin master --quiet")
         
         counter += 1
         time.sleep(5)

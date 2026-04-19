@@ -7,7 +7,6 @@ import pandas as pd
 
 st.set_page_config(page_title="JASTON DASHBOARD", layout="wide")
 
-# UI Styling
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: white; }
@@ -26,23 +25,22 @@ def get_remote_data(filename):
 data = get_remote_data("data.json")
 history = get_remote_data("history.json")
 
-# ONLINE/OFFLINE CHECK
+# ONLINE/OFFLINE CHECK (Updated to 5 Minutes)
 is_online = False
 if data:
     last_sync = datetime.strptime(data['timestamp'], '%Y-%m-%d %H:%M:%S')
-    if (datetime.now() - last_sync).total_seconds() < 25:
+    # Tofauti ya muda iwe chini ya sekunde 300 (Dakika 5)
+    if (datetime.now() - last_sync).total_seconds() < 300:
         is_online = True
 
 st.title("🦅 JASTON MASTER TRADE PRO")
 
-# Status Bar
 if is_online:
     st.markdown('<div class="status-card" style="background-color: #238636;">SYSTEM STATUS: ONLINE</div>', unsafe_allow_html=True)
 else:
     st.markdown('<div class="status-card" style="background-color: #da3633;">SYSTEM STATUS: OFFLINE (BOT STOPPED)</div>', unsafe_allow_html=True)
 
 if data:
-    # Top Metrics
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Wallet Balance", f"${data['wallet']:.2f}")
     c2.metric("Margin Balance", f"${data['margin_balance']:.2f}")
@@ -51,7 +49,6 @@ if data:
 
     st.divider()
 
-    # Center Section
     col_a, col_b = st.columns(2)
     with col_a:
         st.subheader("📊 Market Indicators")
@@ -64,15 +61,14 @@ if data:
             st.success(f"✅ TRADE EXECUTED: {data['side']}")
             st.write(f"Margin Used: ${data['margin_used']:.2f}")
         else:
-            st.info("📡 Scanning for new entries...")
+            st.info("📡 Scanning market...")
 
-    # History Table
     st.divider()
     st.subheader("📜 Recent Trade History")
     if history:
-        st.table(pd.DataFrame(history).iloc[::-1]) # Trade mpya juu
+        st.table(pd.DataFrame(history).iloc[::-1])
     else:
-        st.write("No trade history found yet.")
+        st.write("Waiting for the first trade history...")
 
 time.sleep(5)
 st.rerun()

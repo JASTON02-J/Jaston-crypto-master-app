@@ -1,60 +1,79 @@
 import streamlit as st
 import json
-import pandas as pd
 import time
+from datetime import datetime
 
 st.set_page_config(layout="wide")
 
-st.markdown("<h1 style='text-align:center;'>🚀 JASTON MASTER TRADE</h1>", unsafe_allow_html=True)
-
-def load(file):
+# ================= LOAD DATA =================
+def load_data():
     try:
-        return json.load(open(file))
+        with open("dashboard.json", "r") as f:
+            return json.load(f)
     except:
-        return {}
+        return None
 
-data = load("dashboard.json")
-trades = load("trades.json")
+# ================= HEADER =================
+st.markdown(
+    "<h1 style='text-align:center; color:#00ffcc;'>🚀 JASTON MASTER TRADE</h1>",
+    unsafe_allow_html=True
+)
 
-# STATUS
-status = data.get("status", "STOPPED")
-st.markdown("## 🚦 Bot Status")
-st.success("🟢 ACTIVE") if status == "ACTIVE" else st.error("🔴 STOPPED")
+st.markdown("---")
 
-# METRICS
-c1, c2, c3 = st.columns(3)
-c1.metric("💰 Balance", data.get("balance", 0))
-c2.metric("⏱ Time", data.get("time", "-"))
-c3.metric("📊 Markets", len(data.get("results", [])))
+# ================= AUTO REFRESH =================
+placeholder = st.empty()
 
-st.divider()
+while True:
+    data = load_data()
 
-# BEST
-best = data.get("best", {})
-st.markdown("## 🔥 Best Market")
+    with placeholder.container():
 
-b1, b2, b3 = st.columns(3)
-b1.metric("📈 Symbol", best.get("symbol", "-"))
-b2.metric("🎯 Confidence", f"{best.get('confidence',0):.1f}%")
-b3.metric("📡 Signal", best.get("signal", "-"))
+        if data is None:
+            st.warning("Waiting for bot data...")
+        else:
+            col1, col2, col3, col4 = st.columns(4)
 
-st.divider()
+            # ================= STATUS =================
+            col1.metric("🤖 BOT STATUS", data["status"])
 
-# TABLE
-st.markdown("## 📊 Market Scanner")
-st.dataframe(pd.DataFrame(data.get("results", [])), use_container_width=True)
+            # ================= BALANCE =================
+            col2.metric("💰 WALLET (USDT)", f"${data['balance']}")
 
-st.divider()
+            # ================= PNL =================
+            col3.metric("📈 PnL", f"${data['pnl']}")
 
-# TRADES
-st.markdown("## 📜 Trades")
+            # ================= TIME =================
+            col4.metric("⏰ TIME", data["time"])
 
-if trades:
-    df = pd.DataFrame(trades)
-    st.metric("📉 Total PnL", df["pnl"].sum())
-    st.dataframe(df, use_container_width=True)
-else:
-    st.info("No trades yet 🚫")
+            st.markdown("---")
 
-time.sleep(5)
-st.rerun()
+            # ================= BEST MARKET =================
+            st.subheader("🔥 BEST MARKET")
+
+            best = data["best"]
+
+            st.success(f"""
+            SYMBOL: {best['symbol']}
+            SIGNAL: {best['signal']}
+            CONFIDENCE: {best['confidence']:.1f}%
+            """)
+
+            st.markdown("---")
+
+            # ================= MARKET TABLE =================
+            st.subheader("📊 MARKET SCANNER")
+
+            for r in data["results"]:
+                st.write(
+                    f"{r['symbol']} | {r['signal']} | Conf: {r['confidence']:.1f}% | RSI {r['rsi']:.1f} | ADX {r['adx']:.1f}"
+                )
+
+            st.markdown("---")
+
+            # ================= TRADE HISTORY =================
+            st.subheader("📜 TRADE HISTORY")
+
+            st.info("No trades yet (connect trading logic)")
+
+    time.sleep(5)

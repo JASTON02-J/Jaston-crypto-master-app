@@ -12,6 +12,9 @@ SECRET = "m2h1SRu4tU9wdMdDkqHVII8lpU6qtnCXvajiYOp9uUTxH6iaY37K3fujcOO6IXYh"
 
 SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
 
+RISK_PER_TRADE = 0.02  # 2% risk
+RR_RATIO = 2           # Risk:Reward 1:2
+
 exchange = ccxt.binance({
     'apiKey': API_KEY,
     'secret': SECRET,
@@ -19,65 +22,52 @@ exchange = ccxt.binance({
     'options': {'defaultType': 'future'}
 })
 
-# ================= MEMORY =================
-MEMORY_FILE = "market_memory.json"
+DASHBOARD_FILE = "dashboard.json"
+TRADES_FILE = "trades.json"
 
-def load_memory():
-    if os.path.exists(MEMORY_FILE):
-        try:
-            with open(MEMORY_FILE, "r") as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
+# ================= INIT FILES =================
+if not os.path.exists(TRADES_FILE):
+    with open(TRADES_FILE, "w") as f:
+        json.dump([], f)
 
-def save_memory(data):
-    try:
-        with open(MEMORY_FILE, "w") as f:
-            json.dump(data, f, indent=4)
-    except Exception as e:
-        print("Memory save error:", e)
+# ================= SAVE DASHBOARD =================
+def save_dashboard(data):
+    with open(DASHBOARD_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
-memory = load_memory()
+# ================= SAVE TRADE =================
+def log_trade(trade):
+    trades = json.load(open(TRADES_FILE))
+    trades.append(trade)
+    with open(TRADES_FILE, "w") as f:
+        json.dump(trades, f, indent=4)
 
-# ================= SAFE FETCH =================
-def fetch_ohlcv_safe(symbol, retries=3, delay=2):
-    for attempt in range(retries):
+# ================= FETCH =================
+def fetch_ohlcv_safe(symbol):
+    for _ in range(3):
         try:
             data = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=100)
-
-            if data and len(data) > 50:
+            if data:
                 return data
-
-            print(f"[{symbol}] Not enough data, retrying...")
-
-        except Exception as e:
-            print(f"[{symbol}] Fetch error (try {attempt+1}): {e}")
-
-        time.sleep(delay)
-
+        except:
+            time.sleep(2)
     return None
 
 # ================= ANALYSIS =================
 def analyze_market(symbol):
     try:
         bars = fetch_ohlcv_safe(symbol)
-
         if bars is None:
-            raise Exception("No market data received")
+            raise Exception("No data")
 
         df = pd.DataFrame(bars, columns=['t','o','h','l','c','v'])
-
-        # Ensure numeric types
         df[['o','h','l','c','v']] = df[['o','h','l','c','v']].astype(float)
 
-        # ================= INDICATORS =================
         df['ema9'] = ta.trend.ema_indicator(df['c'], 9)
         df['ema21'] = ta.trend.ema_indicator(df['c'], 21)
         df['rsi'] = ta.momentum.RSIIndicator(df['c'], 14).rsi()
         df['adx'] = ta.trend.ADXIndicator(df['h'], df['l'], df['c'], 14).adx()
 
-        # Get last valid values
         ema9 = df['ema9'].dropna().iloc[-1]
         ema21 = df['ema21'].dropna().iloc[-1]
         rsi = df['rsi'].dropna().iloc[-1]
@@ -86,7 +76,6 @@ def analyze_market(symbol):
         ema_up = ema9 > ema21
         ema_down = ema9 < ema21
 
-        # ================= SCORE ENGINE (UNCHANGED) =================
         score = 0
         if adx > 20:
             score += 1
@@ -96,14 +85,10 @@ def analyze_market(symbol):
             score += 1
 
         confidence = (score / 3) * 100
-
-        if confidence >= 70:
-            signal = "OPPORTUNITY 🚀"
-        else:
-            signal = "NO OPPORTUNITY ❌"
+        signal = "BUY" if ema_up else "SELL"
 
         return {
-            "symbol": symbol.replace("/USDT", ""),
+            "symbol": symbol,
             "price": df['c'].iloc[-1],
             "confidence": confidence,
             "signal": signal,
@@ -111,77 +96,81 @@ def analyze_market(symbol):
             "adx": adx
         }
 
-    except Exception as e:
-        print(f"[{symbol}] ANALYSIS ERROR:", e)
+    except:
+        return None
 
-        return {
-            "symbol": symbol.replace("/USDT", ""),
-            "price": 0,
-            "confidence": 0,
-            "signal": "ERROR",
-            "rsi": 0,
-            "adx": 0
+# ================= EXECUTE TRADE =================
+def execute_trade(data, balance):
+    symbol = data["symbol"]
+    price = data["price"]
+
+    risk_amount = balance * RISK_PER_TRADE
+    qty = risk_amount / price
+
+    if data["signal"] == "BUY":
+        sl = price * 0.99
+        tp = price * (1 + 0.02)
+    else:
+        sl = price * 1.01
+        tp = price * (1 - 0.02)
+
+    try:
+        exchange.create_market_order(symbol, data["signal"].lower(), qty)
+
+        trade = {
+            "time": datetime.now().strftime('%H:%M:%S'),
+            "symbol": symbol,
+            "side": data["signal"],
+            "entry": price,
+            "sl": sl,
+            "tp": tp,
+            "status": "OPEN",
+            "pnl": 0
         }
+
+        log_trade(trade)
+
+    except Exception as e:
+        print("Trade error:", e)
 
 # ================= MAIN LOOP =================
 def run_bot():
-    print("Bot is starting...")
-
     while True:
         try:
             results = []
 
-            for symbol in SYMBOLS:
-                result = analyze_market(symbol)
-                results.append(result)
-
-                # Prevent rate limit
+            for s in SYMBOLS:
+                r = analyze_market(s)
+                if r:
+                    results.append(r)
                 time.sleep(1)
 
-            # Get best market safely
-            valid_results = [r for r in results if r["confidence"] > 0]
+            best = max(results, key=lambda x: x["confidence"])
 
-            if valid_results:
-                best = max(valid_results, key=lambda x: x["confidence"])
-            else:
-                best = results[0]
+            balance = exchange.fetch_balance()['total']['USDT']
 
-            # Clear screen
-            os.system('cls' if os.name == 'nt' else 'clear')
+            if best["confidence"] >= 70:
+                execute_trade(best, balance)
 
-            print(f"🚀 MULTI-MARKET AI SCANNER | {datetime.now().strftime('%H:%M:%S')}")
-            print("------------------------------------------------------------------")
+            dashboard_data = {
+                "status": "ACTIVE",
+                "time": datetime.now().strftime('%H:%M:%S'),
+                "balance": balance,
+                "results": results,
+                "best": best
+            }
 
-            # ================= MARKET LIST =================
-            for r in results:
-                print(f"{r['symbol']}: {r['signal']} | Conf: {r['confidence']:.1f}% | RSI {r['rsi']:.1f} | ADX {r['adx']:.1f}")
-
-            print("------------------------------------------------------------------")
-
-            # ================= BEST MARKET =================
-            print(f"🔥 BEST MARKET: {best['symbol']}")
-            print(f"📊 SIGNAL: {best['signal']}")
-            print(f"🎯 CONFIDENCE: {best['confidence']:.1f}%")
-
-            # ================= GLOBAL ACTION =================
-            if best['confidence'] >= 70:
-                print(f"🟢 ACTION: TRADE {best['symbol']} NOW 🚀")
-            else:
-                print("🔴 ACTION: NO CLEAR SETUP ❌")
-
-            print("------------------------------------------------------------------")
-
-            # ================= SAVE MEMORY =================
-            memory["last_scan"] = datetime.now().strftime('%H:%M:%S')
-            memory["best_market"] = best
-            save_memory(memory)
+            save_dashboard(dashboard_data)
 
             time.sleep(10)
 
         except Exception as e:
-            print("MAIN LOOP ERROR:", e)
-            time.sleep(10)
+            print("Error:", e)
+            save_dashboard({"status": "STOPPED"})
+            time.sleep(5)
 
-# ================= RUN =================
 if __name__ == "__main__":
-    run_bot()
+    try:
+        run_bot()
+    except KeyboardInterrupt:
+        save_dashboard({"status": "STOPPED"})

@@ -1,1 +1,11 @@
-{"last_scan": "22:18:38", "best_market": {"symbol": "BTC", "price": 0, "confidence": 0, "signal": "ERROR", "rsi": 0, "adx": 0}}
+{
+    "last_scan": "23:06:18",
+    "best_market": {
+        "symbol": "BTC",
+        "price": 74677.3,
+        "confidence": 100.0,
+        "signal": "OPPORTUNITY \ud83d\ude80",
+        "rsi": 37.49157781904082,
+        "adx": 30.070665310813116
+    }
+}

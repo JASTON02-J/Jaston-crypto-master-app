@@ -1,1 +1,1 @@
-{"status": "RUNNING", "timestamp": "2026-04-19 12:49:42", "wallet": 0.0, "price": 74958.1, "leverage": 20, "sig15": "DOWN", "sig5": "DOWN", "sig1": "DOWN", "adx": 34.32391922809415, "crossover": "STABLE", "in_trade": false, "side": null, "pnl": 0.0, "pnl_pct": 0.0, "margin": 0.0}
+{"status": "RUNNING", "timestamp": "2026-04-19 12:49:57", "wallet": 0.0, "price": 74956.6, "leverage": 20, "sig15": "DOWN", "sig5": "SIDE", "sig1": "DOWN", "adx": 0, "crossover": "STABLE", "in_trade": false, "side": null, "pnl": 0.0, "pnl_pct": 0.0, "margin": 0.0}

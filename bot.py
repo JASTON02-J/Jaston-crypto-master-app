@@ -1,4 +1,4 @@
- import ccxt
+import ccxt
 import pandas as pd
 import ta
 import os

@@ -4,17 +4,15 @@ import json
 from datetime import datetime
 import time
 
-st.set_page_config(page_title="JASTON MASTER TRADE", layout="wide")
+st.set_page_config(page_title="JASTON DASHBOARD", layout="wide")
 
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: white; }
     .stMetric { background-color: #1a1c24; padding: 15px; border-radius: 10px; border: 1px solid #30363d; }
-    .status-box { padding: 10px; border-radius: 5px; text-align: center; font-weight: bold; }
+    .status-card { padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; margin-bottom: 15px; }
     </style>
     """, unsafe_allow_html=True)
-
-st.title("🚀 JASTON MASTER TRADE")
 
 def fetch_data():
     url = "https://raw.githubusercontent.com/JASTON02-J/Jaston-crypto-master-app/master/data.json"
@@ -25,45 +23,53 @@ def fetch_data():
 
 data = fetch_data()
 
-# LOGIC YA STATUS (Heartbeat Fix)
+# LOGIC YA ONLINE/OFFLINE (Strict Timeout)
 is_online = False
-if data and 'timestamp' in data:
-    try:
-        last_seen = datetime.strptime(data['timestamp'], '%Y-%m-%d %H:%M:%S')
-        # Kama bot haijatuma data kwa zaidi ya sekunde 30, weka OFFLINE
-        if (datetime.now() - last_seen).total_seconds() < 30:
-            is_online = True
-    except: is_online = False
+if data:
+    last_sync = datetime.strptime(data['timestamp'], '%Y-%m-%d %H:%M:%S')
+    # Kama sekunde 15 zimepita bila data mpya, hesabu kama bot imezimwa
+    if (datetime.now() - last_sync).total_seconds() < 15:
+        is_online = True
+
+st.title("🚀 JASTON MASTER TRADE PRO")
+
+# DASHBOARD HEADER
+if is_online:
+    st.markdown('<div class="status-card" style="background-color: #238636;">SYSTEM STATUS: ONLINE</div>', unsafe_allow_html=True)
+else:
+    st.markdown('<div class="status-card" style="background-color: #da3633;">SYSTEM STATUS: OFFLINE (BOT STOPPED)</div>', unsafe_allow_html=True)
 
 if data:
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        bg = "#238636" if is_online else "#da3633"
-        st.markdown(f'<div class="status-box" style="background-color: {bg}">BOT: {"ONLINE" if is_online else "OFFLINE"}</div>', unsafe_allow_html=True)
-    with col2: st.metric("Wallet", f"${data.get('wallet', 0.0):.2f}")
-    with col3: st.metric("BTC Price", f"${data.get('price', 0.0):,.1f}")
-    with col4: st.metric("Leverage", f"{data.get('leverage', 0)}x")
+    # MSTARI WA KWANZA: WALLET NA PRICE
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Wallet Balance", f"${data.get('wallet', 0.0):.2f}")
+    c2.metric("Margin Balance", f"${data.get('margin_balance', 0.0):.2f}")
+    c3.metric("BTC Price", f"${data.get('price', 0.0):,.1f}")
+    c4.metric("PnL (%)", f"{data.get('pnl_pct', 0.0):+.2f}%")
 
     st.divider()
 
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        st.subheader("📊 Indicators")
-        st.write(f"15M Trend: {'🟢 UP' if data.get('sig15')=='UP' else '🔴 DOWN' if data.get('sig15')=='DOWN' else '🟡 SIDE'}")
-        st.write(f"01M Trend: {'🟢 UP' if data.get('sig1')=='UP' else '🔴 DOWN' if data.get('sig1')=='DOWN' else '🟡 SIDE'}")
-        st.progress(min(data.get('adx', 0)/100, 1.0), text=f"ADX: {data.get('adx', 0):.1f}")
-        # Hapa tumetumia .get kuzuia KeyError
-        st.caption(f"Reason: {data.get('reason', 'Syncing...')}")
+    # MSTARI WA PILI: TRENDS NA TRADE EXECUTED
+    col_a, col_b = st.columns([1, 1])
+    
+    with col_a:
+        st.subheader("📊 Market Indicators")
+        st.write(f"15M Trend: {data.get('sig15')}")
+        st.write(f"05M Trend: {data.get('sig5')}")
+        st.write(f"01M Trend: {data.get('sig1')}")
+        st.progress(min(data.get('adx', 0)/100, 1.0), text=f"ADX Strength: {data.get('adx', 0):.1f}")
 
-    with c2:
-        st.subheader("🔥 Execution Room")
+    with col_b:
+        st.subheader("🔥 Execution Status")
         if data.get('in_trade'):
-            st.success(f"TRADE EXECUTED: {data.get('side')} | Time: {data.get('executed_at', 'N/A')}")
-            st.metric("PnL (%)", f"{data.get('pnl_pct', 0.0):.2f}%")
+            st.success(f"✅ TRADE EXECUTED: {data.get('side')}")
+            st.write(f"Margin Used: ${data.get('margin', 0.0):.2f}")
+            st.write(f"Live Update: {data.get('timestamp')}")
         else:
-            st.info(f"Scanning Market... Status: {data.get('status', 'Scanning')}")
+            st.info("📡 Scanning... No active trade at the moment.")
+
 else:
-    st.warning("Connecting to GitHub...")
+    st.warning("Connecting to GitHub data...")
 
 time.sleep(5)
 st.rerun()

@@ -7,8 +7,8 @@ import json
 from datetime import datetime
 
 # ================= CONFIGURATION =================
-API_KEY = 'dUTfsZjIuDVwHcaIAYwVEJ4n7Te8jHsEeRc2wJencEPxHC0XKygve29qOYpY1Co9'
-SECRET = 'm2h1SRu4tU9wdMdDkqHVII8lpU6qtnCXvajiYOp9uUTxH6iaY37K3fujcOO6IXYh'
+API_KEY = 'WEKA_API_KEY_YAKO'
+SECRET = 'WEKA_SECRET_YAKO'
 SYMBOL = 'BTC/USDT'
 
 exchange = ccxt.binance({
@@ -27,13 +27,6 @@ def get_data(symbol, timeframe, limit=100):
         return df
     except: return None
 
-def get_signal(df):
-    if df is None: return "SIDE"
-    last = df.iloc[-1]
-    if last['close'] > last['ema9'] > last['ema21']: return "UP"
-    if last['close'] < last['ema9'] < last['ema21']: return "DOWN"
-    return "SIDE"
-
 # ================= MAIN LOOP =================
 counter = 0
 while True:
@@ -43,62 +36,82 @@ while True:
         balance = exchange.fetch_balance()
         usdt_balance = balance['total'].get('USDT', 0.0)
         
+        # Uchambuzi wa Timeframes (15M, 5M, 1M)
         df15, df5, df1 = get_data(SYMBOL, '15m'), get_data(SYMBOL, '5m'), get_data(SYMBOL, '1m')
-        sig15, sig5, sig1 = get_signal(df15), get_signal(df5), get_signal(df1)
         
-        # EMA CROSSOVER LOGIC
-        crossover_msg = "STABLE"
-        if df5 is not None:
-            if df5['ema9'].iloc[-2] <= df5['ema21'].iloc[-2] and df5['ema9'].iloc[-1] > df5['ema21'].iloc[-1]:
-                crossover_msg = "🚀 BULLISH CROSS"
-            elif df5['ema9'].iloc[-2] >= df5['ema21'].iloc[-2] and df5['ema9'].iloc[-1] < df5['ema21'].iloc[-1]:
-                crossover_msg = "⚠️ BEARISH CROSS"
+        def check_trend(df):
+            if df is None: return "WAIT"
+            l = df.iloc[-1]
+            if l['close'] > l['ema9'] > l['ema21']: return "UP"
+            if l['close'] < l['ema9'] < l['ema21']: return "DOWN"
+            return "SIDE"
 
+        t15, t5, t1 = check_trend(df15), check_trend(df5), check_trend(df1)
         adx5 = ta.trend.ADXIndicator(df5['high'], df5['low'], df5['close'], 14).adx().iloc[-1] if df5 is not None else 0
 
-        # TRACK ACTIVE TRADES
-        in_trade, side, active_pnl, pnl_pct, margin_used, current_lev = False, None, 0.0, 0.0, 0.0, 20
+        # LOGIC YA ENTRY & REASONS
+        market_status = "SCANNING"
+        reason = "Waiting for Trend Alignment (15M & 1M must match)"
+        entry, tp, sl = 0, 0, 0
+        
+        if t15 == t1 and t15 != "SIDE":
+            if adx5 > 20:
+                market_status = f"🔥 {t15} SIGNAL DETECTED"
+                reason = f"All trends align {t15} and ADX is strong ({adx5:.1f})"
+                entry = live_price
+                sl = entry * 0.99 if t15 == "UP" else entry * 1.01
+                tp = entry * 1.02 if t15 == "UP" else entry * 0.98
+            else:
+                reason = f"Trend is {t15} but ADX ({adx5:.1f}) is too weak (<20)"
+
+        # CHECK POSITIONS
+        in_trade, side, pnl_pct, margin_used, current_lev = False, None, 0.0, 0.0, 20
+        executed_time = "N/A"
         for pos in balance['info'].get('positions', []):
             if pos['symbol'] == SYMBOL.replace('/', ''):
                 amt = float(pos['positionAmt'])
                 current_lev = int(pos['leverage'])
                 if amt != 0:
                     in_trade, side = True, ("LONG" if amt > 0 else "SHORT")
-                    active_pnl = float(pos['unrealizedProfit'])
-                    entry = float(pos['entryPrice'])
-                    dist = ((live_price - entry) / entry) * 100
+                    entry_p = float(pos['entryPrice'])
+                    dist = ((live_price - entry_p) / entry_p) * 100
                     pnl_pct = dist * current_lev if side == "LONG" else -dist * current_lev
                     margin_used = (abs(amt) * live_price) / current_lev
+                    executed_time = datetime.now().strftime('%H:%M:%S')
 
-        # SAVE DATA FOR STREAMLIT
+        # CMD DASHBOARD
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print(f"🚀 JASTON MASTER PRO | {datetime.now().strftime('%H:%M:%S')}")
+        print(f"💰 WALLET: ${usdt_balance:.2f} | LEVERAGE: {current_lev}x")
+        print(f"💵 BTC PRICE: ${live_price:,.2f}")
+        print("-" * 60)
+        print(f"📊 TRENDS: 15M:{t15} | 5M:{t5} | 1M:{t1}")
+        print(f"📈 ADX: {adx5:.1f} | STATUS: {market_status}")
+        print(f"💡 REASON: {reason}")
+        print("-" * 60)
+        
+        if in_trade:
+            print(f"🔥 TRADE EXECUTED: {side} | Margin: ${margin_used:.2f}")
+            print(f"📈 PnL: {pnl_pct:+.2f}% | Entry: {entry_p:.2f}")
+        else:
+            print("📡 SCANNING MARKET...")
+
+        # SAVE DATA FOR APP
         trade_data = {
-            "status": "RUNNING",
             "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             "wallet": usdt_balance, "price": live_price, "leverage": current_lev,
-            "sig15": sig15, "sig5": sig5, "sig1": sig1, "adx": adx5,
-            "crossover": crossover_msg, "in_trade": in_trade, "side": side,
-            "pnl": active_pnl, "pnl_pct": pnl_pct, "margin": margin_used
+            "sig15": t15, "sig5": t5, "sig1": t1, "adx": adx5,
+            "status": market_status, "reason": reason,
+            "in_trade": in_trade, "side": side, "pnl_pct": pnl_pct, "margin": margin_used,
+            "entry": entry, "tp": tp, "sl": sl, "executed_at": executed_time
         }
-        with open("data.json", "w") as f:
-            json.dump(trade_data, f)
-
-        # GIT PUSH (Every 2 loops)
-        if counter % 2 == 0:
-            os.system("git add data.json && git commit -m 'sync' --quiet && git push origin master --quiet")
-
-        # CMD DISPLAY
-        os.system('cls' if os.name == 'nt' else 'clear')
-        print(f"🦅 JASTON MASTER PRO | {datetime.now().strftime('%H:%M:%S')}")
-        print(f"💰 WALLET: ${usdt_balance:.2f} | PnL: {pnl_pct:+.2f}%")
-        print(f"📊 TREND: 15M:{sig15} | CROSS: {crossover_msg}")
-        print("-" * 50)
+        with open("data.json", "w") as f: json.dump(trade_data, f)
         
-        if not in_trade and sig15 == sig1 and sig15 != "SIDE" and adx5 > 20:
-             # Logic ya kufungua trade hapa
-             pass
-
+        if counter % 1 == 0:
+            os.system("git add data.json && git commit -m 'sync' --quiet && git push origin master --quiet")
+        
         counter += 1
-        time.sleep(3)
+        time.sleep(4)
     except Exception as e:
         print(f"❌ Error: {e}")
         time.sleep(5)

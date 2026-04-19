@@ -4,6 +4,7 @@ import ta
 import time
 import os
 import json
+import atexit
 from datetime import datetime
 
 # ================= CONFIGURATION =================
@@ -18,27 +19,15 @@ exchange = ccxt.binance({
     'options': {'defaultType': 'future'}
 })
 
-def save_history(side, entry, pnl):
-    history_file = 'history.json'
-    now = datetime.now()
-    new_entry = {
-        "Date": now.strftime("%Y-%m-%d"),
-        "Time": now.strftime("%H:%M:%S"),
-        "Side": side,
-        "Entry": f"${entry:,.2f}",
-        "PnL": f"{pnl:+.2f}%"
-    }
-    
-    history = []
-    if os.path.exists(history_file):
-        try:
-            with open(history_file, 'r') as f:
-                history = json.load(f)
-        except: history = []
-    
-    history.append(new_entry)
-    with open(history_file, 'w') as f:
-        json.dump(history[-10:], f)
+# Kazi ya kutuma status ya OFFLINE bot ikizimwa
+def signal_offline():
+    print("\n⚠️ Bot inazimwa... Inatuma status ya OFFLINE GitHub...")
+    offline_data = {"status": "OFFLINE", "timestamp": "2000-01-01 00:00:00"}
+    with open("data.json", "w") as f:
+        json.dump(offline_data, f)
+    os.system("git add data.json && git commit -m 'Bot Offline' --quiet && git push origin master --quiet")
+
+atexit.register(signal_offline)
 
 # ================= MAIN LOOP =================
 counter = 0
@@ -48,11 +37,9 @@ while True:
         live_price = ticker['last']
         balance = exchange.fetch_balance()
         
-        # Balance Info
         usdt_total = balance['total'].get('USDT', 0.0)
         margin_balance = float(balance['info']['assets'][0]['marginBalance']) if 'info' in balance else usdt_total
         
-        # Technical Analysis (15M)
         df15 = exchange.fetch_ohlcv(SYMBOL, timeframe='15m', limit=50)
         df = pd.DataFrame(df15, columns=['t','o','h','l','c','v'])
         ema9 = ta.trend.ema_indicator(df['c'], 9).iloc[-1]
@@ -61,7 +48,6 @@ while True:
         
         trend = "UP" if live_price > ema9 > ema21 else "DOWN" if live_price < ema9 < ema21 else "SIDE"
 
-        # Position Tracking
         in_trade, side, pnl_pct, margin_used, entry_p = False, "NONE", 0.0, 0.0, 0.0
         for pos in balance['info'].get('positions', []):
             if pos['symbol'] == SYMBOL.replace('/', ''):
@@ -74,35 +60,34 @@ while True:
                     pnl_pct = dist * lev if side == "LONG" else -dist * lev
                     margin_used = (abs(amt) * live_price) / lev
 
-        # CMD DASHBOARD
+        # CMD DISPLAY
         os.system('cls' if os.name == 'nt' else 'clear')
-        print(f"🚀 JASTON MASTER PRO | {datetime.now().strftime('%H:%M:%S')}")
+        print(f"🚀 JASTON MASTER TRADE | {datetime.now().strftime('%H:%M:%S')}")
         print(f"💰 WALLET: ${usdt_total:.2f} | MARGIN: ${margin_balance:.2f}")
         print(f"💵 BTC PRICE: ${live_price:,.2f} | ADX: {adx:.1f}")
         print("-" * 60)
-        print(f"📊 TREND 15M: {trend} | STATUS: {'IN TRADE' if in_trade else 'SCANNING'}")
+        print(f"📊 TREND 15M: {trend} | STATUS: ONLINE")
         
         if in_trade:
-            print(f"✅ TRADE EXECUTED: {side} | ENTRY: {entry_p:,.2f}")
-            print(f"📈 LIVE PnL: {pnl_pct:+.2f}% | MARGIN USED: ${margin_used:.2f}")
+            print(f"✅ TRADE EXECUTED: {side} | PnL: {pnl_pct:+.2f}%")
         else:
-            print("💡 REASON: Waiting for EMA & Trend alignment...")
-        print("-" * 60)
+            print("📡 STATUS: SCANNING MARKET...")
 
         # SAVE DATA
         data = {
+            "status": "ONLINE",
             "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             "wallet": usdt_total, "margin_balance": margin_balance,
             "price": live_price, "trend": trend, "adx": adx,
-            "in_trade": in_trade, "side": side, "pnl": pnl_pct, "margin_used": margin_used
+            "in_trade": in_trade, "side": side, "pnl": pnl_pct, "margin_used": margin_used,
+            "reason": "Waiting for signal alignment..."
         }
         with open("data.json", "w") as f: json.dump(data, f)
         
-        # PUSH TO GIT (Fixed with *.json)
-        os.system("git add *.json && git commit -m 'sync data' --quiet && git push origin master --quiet")
+        # PUSH TO GIT (Tumia doti . kuzuia pathspec error)
+        os.system("git add . && git commit -m 'sync' --quiet && git push origin master --quiet")
         
-        counter += 1
-        time.sleep(5)
+        time.sleep(10) # Dakika 5 ni nyingi sana kiongozi, nimeiweka sekunde 10 kwa wepesi
     except Exception as e:
         print(f"Error: {e}")
         time.sleep(5)

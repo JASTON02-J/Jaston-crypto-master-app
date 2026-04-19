@@ -25,13 +25,15 @@ def get_remote_data(filename):
 data = get_remote_data("data.json")
 history = get_remote_data("history.json")
 
-# ONLINE/OFFLINE CHECK (Updated to 5 Minutes)
+# ONLINE/OFFLINE LOGIC
 is_online = False
 if data:
-    last_sync = datetime.strptime(data['timestamp'], '%Y-%m-%d %H:%M:%S')
-    # Tofauti ya muda iwe chini ya sekunde 300 (Dakika 5)
-    if (datetime.now() - last_sync).total_seconds() < 300:
-        is_online = True
+    if data.get("status") == "ONLINE":
+        try:
+            last_sync = datetime.strptime(data.get('timestamp'), '%Y-%m-%d %H:%M:%S')
+            if (datetime.now() - last_sync).total_seconds() < 300: # 5 Minutes
+                is_online = True
+        except: is_online = False
 
 st.title("🦅 JASTON MASTER TRADE PRO")
 
@@ -42,24 +44,25 @@ else:
 
 if data:
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Wallet Balance", f"${data['wallet']:.2f}")
-    c2.metric("Margin Balance", f"${data['margin_balance']:.2f}")
-    c3.metric("BTC Price", f"${data['price']:,.1f}")
-    c4.metric("Live PnL (%)", f"{data['pnl']:+.2f}%")
+    c1.metric("Wallet Balance", f"${data.get('wallet', 0.0):.2f}")
+    c2.metric("Margin Balance", f"${data.get('margin_balance', 0.0):.2f}")
+    c3.metric("BTC Price", f"${data.get('price', 0.0):,.1f}")
+    c4.metric("Live PnL (%)", f"{data.get('pnl', 0.0):+.2f}%")
 
     st.divider()
 
     col_a, col_b = st.columns(2)
     with col_a:
         st.subheader("📊 Market Indicators")
-        st.write(f"Trend: {data['trend']}")
-        st.progress(min(data['adx']/100, 1.0), text=f"ADX Strength: {data['adx']:.1f}")
+        st.write(f"Trend: {data.get('trend', 'N/A')}")
+        st.caption(f"Reason: {data.get('reason', 'Scanning...')}")
+        st.progress(min(data.get('adx', 0)/100, 1.0), text=f"ADX Strength: {data.get('adx', 0):.1f}")
 
     with col_b:
         st.subheader("🔥 Execution Status")
-        if data['in_trade']:
-            st.success(f"✅ TRADE EXECUTED: {data['side']}")
-            st.write(f"Margin Used: ${data['margin_used']:.2f}")
+        if data.get('in_trade'):
+            st.success(f"✅ TRADE EXECUTED: {data.get('side')}")
+            st.write(f"Margin Used: ${data.get('margin_used', 0.0):.2f}")
         else:
             st.info("📡 Scanning market...")
 
@@ -67,8 +70,8 @@ if data:
     st.subheader("📜 Recent Trade History")
     if history:
         st.table(pd.DataFrame(history).iloc[::-1])
-    else:
-        st.write("Waiting for the first trade history...")
+else:
+    st.warning("Connecting to GitHub data...")
 
-time.sleep(5)
+time.sleep(10)
 st.rerun()

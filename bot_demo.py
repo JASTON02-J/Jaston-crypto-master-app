@@ -6,11 +6,11 @@ import os
 from datetime import datetime
 
 # ================= CONFIGURATION =================
-API_KEY = 'dUTfsZjIuDVwHcaIAYwVEJ4n7Te8jHsEeRc2wJencEPxHC0XKygve29qOYpY1Co9'
-SECRET = 'm2h1SRu4tU9wdMdDkqHVII8lpU6qtnCXvajiYOp9uUTxH6iaY37K3fujcOO6IXYh'
+# Funguo mpya za Testnet kutoka kwenye screenshot yako
+API_KEY = 'OpL4QPs6fOoX8g3DcwreryHY6LS5Yn0ZJsYMktiTmql6tAk6drC5JCY6PXfV7B6o'
+SECRET = 'IRwPbetlVoqRsgHWz45LwBhPq73cvo4ig2rb1zl4RuMNWYGYCdkXhpQ8ltbEM633'
 SYMBOL = 'BTC/USDT'
 
-# REKEBISHO: Kutumia URL za Testnet moja kwa moja kuepuka "Deprecation Error"
 exchange = ccxt.binance({
     'apiKey': API_KEY, 
     'secret': SECRET,
@@ -27,7 +27,7 @@ exchange = ccxt.binance({
 })
 
 # ================= RISK MANAGEMENT =================
-FIXED_MARGIN_USDT = 10.0 # Kiasi cha kutumia kwa kila trade
+FIXED_MARGIN_USDT = 10.0 # Bot itatumia $10 pekee kufungua kila trade
 STOP_LOSS_AMT = 0.20     # Hasara ya ukomo ($0.20)
 TAKE_PROFIT_AMT = 0.40    # Faida ya ukomo ($0.40)
 LEVERAGE = 20
@@ -37,17 +37,14 @@ def get_data(symbol, timeframe, limit=100):
     return pd.DataFrame(bars, columns=['time','open','high','low','close','vol'])
 
 def analyze_market():
-    # 15M Trend Analysis
     df_15m = get_data(SYMBOL, '15m')
     ema9_15m = ta.trend.ema_indicator(df_15m['close'], 9).iloc[-1]
     ema21_15m = ta.trend.ema_indicator(df_15m['close'], 21).iloc[-1]
     is_sideways = abs(ema9_15m - ema21_15m) < (df_15m['close'].iloc[-1] * 0.0003)
     
-    # 5M Momentum
     df_5m = get_data(SYMBOL, '5m')
     adx_5m = ta.trend.ADXIndicator(df_5m['high'], df_5m['low'], df_5m['close'], 14).adx().iloc[-1]
     
-    # 1M Confirmation
     df_1m = get_data(SYMBOL, '1m')
     price = df_1m['close'].iloc[-1]
     ema9_1m = ta.trend.ema_indicator(df_1m['close'], 9).iloc[-1]
@@ -64,9 +61,8 @@ m = {"price": 0, "trend_15m": "SCANNING", "adx_5m": 0, "ema21_1m": 0}
 counter = 0
 
 try:
-    # Set Leverage
     try: exchange.set_leverage(LEVERAGE, SYMBOL)
-    except Exception as e: print(f"Leverage Set Info: {e}")
+    except: pass
 
     while True:
         ticker = exchange.fetch_ticker(SYMBOL)
@@ -80,7 +76,6 @@ try:
         margin_used = 0.0
         amt = 0
         
-        # Monitor Position
         for pos in balance['info']['positions']:
             if pos['symbol'] == SYMBOL.replace('/', ''):
                 amt = float(pos['positionAmt'])
@@ -94,7 +89,6 @@ try:
             try: m = analyze_market()
             except: pass
 
-        # DASHBOARD (Matched with Live Style)
         os.system('cls' if os.name == 'nt' else 'clear')
         print(f"🚀 JASTON MASTER BOT (DEMO) | {datetime.now().strftime('%H:%M:%S')}")
         print(f"--------------------------------------------------")
@@ -114,30 +108,22 @@ try:
             print(f"   Margin Used: {margin_used:.2f} USDT")
             print(f"   Live PnL: {pnl_icon} {active_pnl:.4f} USDT")
             
-            # EXIT LOGIC
             if active_pnl <= -STOP_LOSS_AMT:
                 exchange.create_market_order(SYMBOL, 'sell' if side == 'LONG' else 'buy', abs(amt))
-                print("🛑 STOP LOSS EXECUTED")
             elif (side == "LONG" and live_price < m['ema21_1m']) or (side == "SHORT" and live_price > m['ema21_1m']):
                 exchange.create_market_order(SYMBOL, 'sell' if side == 'LONG' else 'buy', abs(amt))
-                print("⚪ EMA EXIT EXECUTED")
             elif active_pnl >= TAKE_PROFIT_AMT:
                 exchange.create_market_order(SYMBOL, 'sell' if side == 'LONG' else 'buy', abs(amt))
-                print("💰 TAKE PROFIT EXECUTED")
         
         elif m['trend_15m'] != "SIDEWAYS" and m['adx_5m'] > 20:
-            # ENTRY LOGIC ($10 Fixed Margin)
             qty = (FIXED_MARGIN_USDT * LEVERAGE) / live_price 
             if m['trend_15m'] == "UP" and live_price > m['ema9_1m']:
                 exchange.create_market_order(SYMBOL, 'buy', qty)
-                print("🚀 LONG POSITION OPENED")
             elif m['trend_15m'] == "DOWN" and live_price < m['ema9_1m']:
                 exchange.create_market_order(SYMBOL, 'sell', qty)
-                print("📉 SHORT POSITION OPENED")
 
         counter += 1
         time.sleep(2)
-
 except Exception as e:
-    print(f"Critical Bot Error: {e}")
+    print(f"Error: {e}")
     time.sleep(5)

@@ -6,11 +6,12 @@ import os
 from datetime import datetime
 
 # ================= CONFIGURATION =================
+# Hakikisha hizi keys hazina nafasi (spaces) ndani yake
 API_KEY = 'OpL4QPs6fOoX8g3DcwreryHY6LS5Yn0ZJsYMktiTmql6tAk6drC5JCY6PXfV7B6o'
 SECRET = 'IRwPbetlVoqRsgHWz45LwBhPq73cvo4ig2rb1zl4RuMNWYGYCdkXhpQ8ltbEM633'
 SYMBOL = 'BTC/USDT'
 
-# REKEBISHO MUHIMU: Tunalazimisha URL za Testnet hapa ili kuepuka error ya "sandbox"
+# SULUHISHO: Tunalazimisha URL za Testnet moja kwa moja bila kutumia 'sandbox'
 exchange = ccxt.binance({
     'apiKey': API_KEY, 
     'secret': SECRET,
@@ -48,38 +49,40 @@ def analyze_market():
     df_1m = get_data(SYMBOL, '1m')
     price = df_1m['close'].iloc[-1]
     ema9_1m = ta.trend.ema_indicator(df_1m['close'], 9).iloc[-1]
-    ema21_1m = ta.trend.ema_indicator(df_1m['close'], 21).iloc[-1] 
 
-    trend_15m = "SIDEWAYS" if is_sideways else ("UP" if price > ema9_1m else "DOWN")
-    return {"price": price, "trend_15m": trend_15m, "adx_5m": adx_5m, "ema9_1m": ema9_1m, "ema21_1m": ema21_1m}
+    trend_15m = "SIDEWAYS" if is_sideways else ("UP" if price > ema9_15m else "DOWN")
+    return {"price": price, "trend_15m": trend_15m, "adx_5m": adx_5m}
 
 # ================= MAIN LOOP =================
 os.system('cls' if os.name == 'nt' else 'clear')
 print("🚀 JASTON MASTER BOT (DEMO) IS CONNECTING...")
 
+m = {"price": 0, "trend_15m": "SCANNING", "adx_5m": 0}
 counter = 0
+
 try:
     while True:
         ticker = exchange.fetch_ticker(SYMBOL)
         live_price = ticker['last']
+        
+        # Tunatumia .get() ili kuzuia kosa kama wallet haina USDT
         balance = exchange.fetch_balance()
         usdt_balance = balance['total'].get('USDT', 0.0)
         
         in_trade = False
         active_pnl = 0.0
-        side = None
-        margin_used = 0.0
         
+        # Angalia kama kuna trade yoyote
         for pos in balance['info'].get('positions', []):
             if pos['symbol'] == SYMBOL.replace('/', ''):
                 amt = float(pos['positionAmt'])
                 if amt != 0:
                     in_trade = True
-                    side = "LONG" if amt > 0 else "SHORT"
                     active_pnl = float(pos['unrealizedProfit'])
-                    margin_used = (abs(amt) * live_price) / LEVERAGE
 
-        if counter % 5 == 0: m = analyze_market()
+        if counter % 5 == 0:
+            try: m = analyze_market()
+            except: pass
 
         os.system('cls' if os.name == 'nt' else 'clear')
         print(f"🚀 JASTON MASTER BOT (DEMO) | {datetime.now().strftime('%H:%M:%S')}")
@@ -91,15 +94,15 @@ try:
         t15m_color = "🟢" if m['trend_15m'] == "UP" else ("🔴" if m['trend_15m'] == "DOWN" else "🟡")
         print(f"🔍 MARKET DIRECTION:")
         print(f"   [15M Trend]: {m['trend_15m']} {t15m_color}")
-        print(f"   [5M ADX]: {m['adx_5m']:.1f}")
+        print(f"   [5M ADX Strength]: {m['adx_5m']:.1f}")
         print(f"--------------------------------------------------")
 
-        # Logic za entry/exit hapa...
-        if not in_trade and m['trend_15m'] != "SIDEWAYS" and m['adx_5m'] > 20:
-             qty = (FIXED_MARGIN_USDT * LEVERAGE) / live_price
-             # Hapa bot ingefungua trade...
+        if in_trade:
+            print(f"🔥 ACTIVE TRADE RUNNING... PnL: {active_pnl:.4f} USDT")
 
         counter += 1
         time.sleep(2)
+
 except Exception as e:
-    print(f"Error: {e}")
+    print(f"❌ Connection Error: {e}")
+    print("Jaribu kusubiri dakika 1 kisha uwashe tena.")

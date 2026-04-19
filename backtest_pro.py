@@ -1,95 +1,165 @@
-import ccxt
+ import ccxt
 import pandas as pd
 import ta
 import os
 from datetime import datetime
 
-# ================= CONFIGURATION (Kama Bot ya Live) =================
-SYMBOL = 'BTC/USDT'
-INITIAL_CAPITAL = 10.0 
+# ================= CONFIG =================
+SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT']
+INITIAL_CAPITAL = 10.0
 LEVERAGE = 20
-STOP_LOSS_AMT = 0.20   # Atoke kwa hasara ya $0.20
-TAKE_PROFIT_AMT = 0.40  # Atoke kwa faida ya $0.40
+
+STOP_LOSS_AMT = 0.20
+TAKE_PROFIT_AMT = 0.40
 
 exchange = ccxt.binance({'options': {'defaultType': 'future'}})
 
-print(f"Connecting to exchange...")
-print(f"Fetching 5000 candles to match Live Bot logic...")
+# ================= CANDLE PATTERN =================
+def candle_pattern(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
 
-bars = exchange.fetch_ohlcv(SYMBOL, timeframe='1m', limit=5000)
-df = pd.DataFrame(bars, columns=['time','open','high','low','close','vol'])
-df['time'] = pd.to_datetime(df['time'], unit='ms')
+    body = abs(last['close'] - last['open'])
+    rng = last['high'] - last['low']
 
-# ================= INDICATORS (Matched with Live Bot) =================
-df['ema9_15m'] = ta.trend.ema_indicator(df['close'], window=135)
-df['ema21_15m'] = ta.trend.ema_indicator(df['close'], window=315)
-df['adx_5m'] = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], window=70).adx()
-df['ema9_5m'] = ta.trend.ema_indicator(df['close'], window=45)
-df['ema9_1m'] = ta.trend.ema_indicator(df['close'], window=9)
-df['ema21_1m'] = ta.trend.ema_indicator(df['close'], window=21) # Hii ndio Trailing Exit
+    if body < rng * 0.1:
+        return "DOJI ⚪"
+    elif last['close'] > last['open'] and prev['close'] < prev['open']:
+        return "BULL ENGULF 🟢"
+    elif last['close'] < last['open'] and prev['close'] > prev['open']:
+        return "BEAR ENGULF 🔴"
+    elif (last['low'] < last['open'] and last['low'] < last['close']):
+        return "HAMMER 🟢"
+    elif (last['high'] > last['open'] and last['high'] > last['close']):
+        return "SHOOT STAR 🔴"
+    return "NONE"
 
-# ================= ENGINE =================
+# ================= ANALYZE MARKET =================
+def analyze(symbol):
+
+    bars = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=300)
+    df = pd.DataFrame(bars, columns=['time','open','high','low','close','vol'])
+
+    df['ema9'] = ta.trend.ema_indicator(df['close'], 9)
+    df['ema21'] = ta.trend.ema_indicator(df['close'], 21)
+    df['adx'] = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], 14).adx()
+    df['rsi'] = ta.momentum.RSIIndicator(df['close'], 14).rsi()
+
+    price = df['close'].iloc[-1]
+
+    ema_up = df['ema9'].iloc[-1] > df['ema21'].iloc[-1]
+
+    score = 0
+    if ema_up:
+        score += 1
+    if df['adx'].iloc[-1] > 20:
+        score += 1
+    if df['rsi'].iloc[-1] > 55 or df['rsi'].iloc[-1] < 45:
+        score += 1
+
+    candle = candle_pattern(df)
+
+    confidence = (score / 3) * 100
+
+    if confidence >= 70:
+        signal = "OPPORTUNITY 🚀"
+    else:
+        signal = "NO OPPORTUNITY ❌"
+
+    return {
+        "symbol": symbol.replace("/USDT", ""),
+        "price": price,
+        "confidence": confidence,
+        "signal": signal,
+        "candle": candle
+    }
+
+# ================= BACKTEST ENGINE =================
+wallet = INITIAL_CAPITAL
 trade_log = []
-in_position = False
-entry_price = 0
-entry_time = None
-position_type = ""
-current_wallet = INITIAL_CAPITAL
 
-for i in range(1, len(df)):
-    price = df['close'].iloc[i]
-    is_sideways = abs(df['ema9_15m'].iloc[i] - df['ema21_15m'].iloc[i]) < (price * 0.0003)
-    
-    if not in_position and not is_sideways and df['adx_5m'].iloc[i] > 20:
-        # Entry Logic (Same as Live Bot)
-        if price > df['ema9_15m'].iloc[i] and price > df['ema9_1m'].iloc[i]:
-            in_position, position_type, entry_price = True, "LONG", price
-            entry_time = df['time'].iloc[i]
-        elif price < df['ema9_15m'].iloc[i] and price < df['ema9_1m'].iloc[i]:
-            in_position, position_type, entry_price = True, "SHORT", price
-            entry_time = df['time'].iloc[i]
+for symbol in SYMBOLS:
 
-    elif in_position:
-        # Piga hesabu ya PnL ya sasa (Floating PnL)
-        raw_pnl = (price - entry_price)/entry_price if position_type=="LONG" else (entry_price - price)/entry_price
-        active_pnl_usdt = (current_wallet * 0.5) * raw_pnl * LEVERAGE 
-        
-        # 1. STOP LOSS CHECK ($0.20)
-        exit_sl = active_pnl_usdt <= -STOP_LOSS_AMT
-        
-        # 2. TAKE PROFIT CHECK ($0.40)
-        exit_tp = active_pnl_usdt >= TAKE_PROFIT_AMT
-        
-        # 3. EMA 21 TRAILING EXIT (Kama ile ya Live)
-        exit_ema = (position_type == "LONG" and price < df['ema21_1m'].iloc[i]) or \
-                   (position_type == "SHORT" and price > df['ema21_1m'].iloc[i])
-        
-        if exit_sl or exit_tp or exit_ema:
-            current_wallet += active_pnl_usdt
-            reason = "SL 🔴" if exit_sl else ("TP 🟢" if exit_tp else "EMA ⚪")
-            
-            trade_log.append({
-                'date': entry_time.strftime('%m-%d'),
-                'time': entry_time.strftime('%H:%M'),
-                'type': position_type,
-                'pnl': active_pnl_usdt,
-                'wallet': current_wallet,
-                'reason': reason
-            })
-            in_position = False
+    bars = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=300)
+    df = pd.DataFrame(bars, columns=['time','open','high','low','close','vol'])
+
+    df['ema9'] = ta.trend.ema_indicator(df['close'], 9)
+    df['ema21'] = ta.trend.ema_indicator(df['close'], 21)
+    df['adx'] = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], 14).adx()
+
+    in_trade = False
+    entry = 0
+
+    for i in range(2, len(df)):
+
+        price = df['close'].iloc[i]
+
+        ema_up = df['ema9'].iloc[i] > df['ema21'].iloc[i]
+        ema_down = df['ema9'].iloc[i] < df['ema21'].iloc[i]
+
+        if not in_trade and df['adx'].iloc[i] > 20:
+
+            if ema_up:
+                in_trade = True
+                entry = price
+                side = "LONG"
+
+            elif ema_down:
+                in_trade = True
+                entry = price
+                side = "SHORT"
+
+        elif in_trade:
+
+            pnl = (price - entry)/entry if side=="LONG" else (entry - price)/entry
+            pnl_usdt = wallet * 0.5 * pnl * LEVERAGE
+
+            exit_sl = pnl_usdt <= -STOP_LOSS_AMT
+            exit_tp = pnl_usdt >= TAKE_PROFIT_AMT
+            exit_trend = (side=="LONG" and ema_down) or (side=="SHORT" and ema_up)
+
+            if exit_sl or exit_tp or exit_trend:
+                wallet += pnl_usdt
+
+                trade_log.append({
+                    "symbol": symbol.replace("/USDT",""),
+                    "pnl": pnl_usdt,
+                    "wallet": wallet,
+                    "reason": "SL" if exit_sl else ("TP" if exit_tp else "TREND")
+                })
+
+                in_trade = False
+
+# ================= MARKET SCANNER =================
+results = [analyze(s) for s in SYMBOLS]
+best = max(results, key=lambda x: x["confidence"])
 
 # ================= DASHBOARD =================
 os.system('cls' if os.name == 'nt' else 'clear')
-print(f"📊 JASTON BACKTEST PRO (SYNCED WITH LIVE BOT) | {datetime.now().strftime('%H:%M:%S')}")
-print(f"---------------------------------------------------------------------------")
-print(f"{'DATE':<8} {'TIME':<8} {'TYPE':<7} {'REASON':<8} {'PnL (USDT)':<15} {'BALANCE'}")
-print(f"---------------------------------------------------------------------------")
 
-for t in trade_log:
-    print(f"{t['date']:<8} {t['time']:<8} {t['type']:<7} {t['reason']:<8} {t['pnl']:>+8.4f}      ${t['wallet']:.2f}")
+print(f"🚀 JASTON AI SYNCHRONIZED BACKTEST | {datetime.now().strftime('%H:%M:%S')}")
+print("------------------------------------------------------------")
 
-print(f"---------------------------------------------------------------------------")
+print("📡 MARKET RADAR:")
+for r in results:
+    print(f"{r['symbol']}: {r['signal']} | {r['confidence']:.1f}% | 🕯 {r['candle']}")
+
+print("------------------------------------------------------------")
+
+print(f"🔥 BEST MARKET: {best['symbol']}")
+print(f"📊 SIGNAL: {best['signal']}")
+print(f"🎯 CONFIDENCE: {best['confidence']:.1f}%")
+
+print("------------------------------------------------------------")
+
 print(f"🚀 TOTAL TRADES: {len(trade_log)}")
-print(f"💰 INITIAL: ${INITIAL_CAPITAL:.2f} | FINAL: ${current_wallet:.2f}")
-print(f"📈 NET PROFIT: ${current_wallet - INITIAL_CAPITAL:.4f}")
-print(f"---------------------------------------------------------------------------")
+print(f"💰 INITIAL: ${INITIAL_CAPITAL:.2f}")
+print(f"💰 FINAL: ${wallet:.2f}")
+print(f"📈 NET PROFIT: ${wallet - INITIAL_CAPITAL:.4f}")
+
+print("------------------------------------------------------------")
+
+if best['confidence'] >= 70:
+    print(f"🟢 RECOMMENDATION: TRADE {best['symbol']} 🚀")
+else:
+    print("🔴 RECOMMENDATION: NO CLEAR SETUP ❌")

@@ -7,8 +7,8 @@ import json
 from datetime import datetime
 
 # ================= CONFIGURATION =================
-API_KEY = 'dUTfsZjIuDVwHcaIAYwVEJ4n7Te8jHsEeRc2wJencEPxHC0XKygve29qOYpY1Co9'
-SECRET = 'm2h1SRu4tU9wdMdDkqHVII8lpU6qtnCXvajiYOp9uUTxH6iaY37K3fujcOO6IXYh'
+API_KEY = 'WEKA_API_KEY_YAKO'
+SECRET = 'WEKA_SECRET_YAKO'
 SYMBOL = 'BTC/USDT'
 
 exchange = ccxt.binance({
@@ -36,7 +36,6 @@ while True:
         balance = exchange.fetch_balance()
         usdt_balance = balance['total'].get('USDT', 0.0)
         
-        # Uchambuzi wa Timeframes (15M, 5M, 1M)
         df15, df5, df1 = get_data(SYMBOL, '15m'), get_data(SYMBOL, '5m'), get_data(SYMBOL, '1m')
         
         def check_trend(df):
@@ -51,18 +50,18 @@ while True:
 
         # LOGIC YA ENTRY & REASONS
         market_status = "SCANNING"
-        reason = "Waiting for Trend Alignment (15M & 1M must match)"
+        reason = "Wait: Trends not aligned"
         entry, tp, sl = 0, 0, 0
         
         if t15 == t1 and t15 != "SIDE":
             if adx5 > 20:
-                market_status = f"🔥 {t15} SIGNAL DETECTED"
-                reason = f"All trends align {t15} and ADX is strong ({adx5:.1f})"
+                market_status = f"🔥 {t15} SIGNAL"
+                reason = f"Trend Match & ADX Strong ({adx5:.1f})"
                 entry = live_price
                 sl = entry * 0.99 if t15 == "UP" else entry * 1.01
                 tp = entry * 1.02 if t15 == "UP" else entry * 0.98
             else:
-                reason = f"Trend is {t15} but ADX ({adx5:.1f}) is too weak (<20)"
+                reason = f"Trend {t15} but ADX ({adx5:.1f}) Weak"
 
         # CHECK POSITIONS
         in_trade, side, pnl_pct, margin_used, current_lev = False, None, 0.0, 0.0, 20
@@ -86,17 +85,15 @@ while True:
         print(f"💵 BTC PRICE: ${live_price:,.2f}")
         print("-" * 60)
         print(f"📊 TRENDS: 15M:{t15} | 5M:{t5} | 1M:{t1}")
-        print(f"📈 ADX: {adx5:.1f} | STATUS: {market_status}")
-        print(f"💡 REASON: {reason}")
+        print(f"📈 ADX: {adx5:.1f} | REASON: {reason}")
         print("-" * 60)
         
         if in_trade:
-            print(f"🔥 TRADE EXECUTED: {side} | Margin: ${margin_used:.2f}")
-            print(f"📈 PnL: {pnl_pct:+.2f}% | Entry: {entry_p:.2f}")
+            print(f"🔥 TRADE EXECUTED: {side} | Margin: ${margin_used:.2f} | PnL: {pnl_pct:+.2f}%")
         else:
-            print("📡 SCANNING MARKET...")
+            print(f"📡 STATUS: {market_status}")
 
-        # SAVE DATA FOR APP
+        # SAVE DATA
         trade_data = {
             "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             "wallet": usdt_balance, "price": live_price, "leverage": current_lev,
@@ -107,6 +104,7 @@ while True:
         }
         with open("data.json", "w") as f: json.dump(trade_data, f)
         
+        # Pushing to Git
         if counter % 1 == 0:
             os.system("git add data.json && git commit -m 'sync' --quiet && git push origin master --quiet")
         

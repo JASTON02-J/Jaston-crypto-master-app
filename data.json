@@ -1,1 +1,1 @@
-{"timestamp": "2026-04-19 11:31:28", "wallet": 0.0, "price": 75037.5, "sig15": "DOWN", "sig1": "DOWN", "in_trade": false, "side": null, "pnl": 0.0, "margin": 0.0, "total_pnl": 0.0, "history": []}
+{"timestamp": "2026-04-19 11:52:34", "wallet": 0.0, "price": 75210.5, "total_pnl": 0.0, "sig15": "SIDE", "adx15": 30.9, "cross15": "BEARISH", "sig5": "SIDE", "adx5": 28.2, "cross5": "BEARISH", "sig1": "UP", "adx1": 13.8, "cross1": "BULLISH", "in_trade": false, "side": null, "pnl": 0.0, "margin": 0.0, "history": []}

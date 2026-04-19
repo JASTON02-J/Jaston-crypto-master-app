@@ -19,12 +19,18 @@ exchange = ccxt.binance({
     'options': {'defaultType': 'future'}
 })
 
+# muhimu sana kwa futures
+exchange.set_sandbox_mode(False)
+
 # ================= MEMORY =================
 MEMORY_FILE = "market_memory.json"
 
 def load_memory():
     if os.path.exists(MEMORY_FILE):
-        return json.load(open(MEMORY_FILE))
+        try:
+            return json.load(open(MEMORY_FILE))
+        except:
+            return {}
     return {}
 
 def save_memory(data):
@@ -36,19 +42,35 @@ memory = load_memory()
 # ================= SCAN FUNCTION =================
 def analyze_market(symbol):
     try:
-        bars = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=100)
+        bars = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=150)
+
+        if not bars or len(bars) < 50:
+            raise Exception("Not enough data")
+
         df = pd.DataFrame(bars, columns=['t','o','h','l','c','v'])
 
-        df['ema9'] = ta.trend.ema_indicator(df['c'], 9)
-        df['ema21'] = ta.trend.ema_indicator(df['c'], 21)
-        df['rsi'] = ta.momentum.RSIIndicator(df['c'], 14).rsi()
-        df['adx'] = ta.trend.ADXIndicator(df['h'], df['l'], df['c'], 14).adx()
+        # kuhakikisha numeric
+        df[['o','h','l','c','v']] = df[['o','h','l','c','v']].astype(float)
 
-        ema_up = df['ema9'].iloc[-1] > df['ema21'].iloc[-1]
-        ema_down = df['ema9'].iloc[-1] < df['ema21'].iloc[-1]
+        # indicators
+        df['ema9'] = ta.trend.ema_indicator(df['c'], window=9)
+        df['ema21'] = ta.trend.ema_indicator(df['c'], window=21)
+        df['rsi'] = ta.momentum.RSIIndicator(df['c'], window=14).rsi()
+        df['adx'] = ta.trend.ADXIndicator(df['h'], df['l'], df['c'], window=14).adx()
 
+        # remove NaN
+        df = df.dropna()
+
+        if len(df) < 10:
+            raise Exception("Indicators not ready")
+
+        ema9 = df['ema9'].iloc[-1]
+        ema21 = df['ema21'].iloc[-1]
         rsi = df['rsi'].iloc[-1]
         adx = df['adx'].iloc[-1]
+
+        ema_up = ema9 > ema21
+        ema_down = ema9 < ema21
 
         # ================= SCORE ENGINE =================
         score = 0
@@ -68,14 +90,15 @@ def analyze_market(symbol):
 
         return {
             "symbol": symbol.replace("/USDT", ""),
-            "price": df['c'].iloc[-1],
-            "confidence": confidence,
+            "price": float(df['c'].iloc[-1]),
+            "confidence": float(confidence),
             "signal": signal,
-            "rsi": rsi,
-            "adx": adx
+            "rsi": float(rsi),
+            "adx": float(adx)
         }
 
-    except:
+    except Exception as e:
+        print(f"ERROR on {symbol}: {str(e)}")  # 👈 utaona kosa halisi
         return {
             "symbol": symbol.replace("/USDT", ""),
             "price": 0,
@@ -100,18 +123,15 @@ while True:
         print(f"🚀 MULTI-MARKET AI SCANNER | {datetime.now().strftime('%H:%M:%S')}")
         print("------------------------------------------------------------------")
 
-        # ================= MARKET LIST =================
         for r in results:
             print(f"{r['symbol']}: {r['signal']} | Conf: {r['confidence']:.1f}% | RSI {r['rsi']:.1f} | ADX {r['adx']:.1f}")
 
         print("------------------------------------------------------------------")
 
-        # ================= BEST MARKET =================
         print(f"🔥 BEST MARKET: {best['symbol']}")
         print(f"📊 SIGNAL: {best['signal']}")
         print(f"🎯 CONFIDENCE: {best['confidence']:.1f}%")
 
-        # ================= GLOBAL STATUS =================
         if best['confidence'] >= 70:
             print(f"🟢 ACTION: TRADE {best['symbol']} NOW 🚀")
         else:
@@ -119,12 +139,12 @@ while True:
 
         print("------------------------------------------------------------------")
 
-        # save memory
         memory["last_scan"] = datetime.now().strftime('%H:%M:%S')
         memory["best_market"] = best
         save_memory(memory)
 
         time.sleep(10)
 
-    except Exception:
+    except Exception as e:
+        print("MAIN LOOP ERROR:", str(e))
         time.sleep(10)

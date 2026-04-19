@@ -19,14 +19,25 @@ exchange = ccxt.binance({
     'options': {'defaultType': 'future'}
 })
 
-def signal_offline():
-    print("\n⚠️ BOT STOPPED. Syncing status...")
-    offline_data = {"status": "STOPPED", "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-    with open("data.json", "w") as f: json.dump(offline_data, f)
-    # Amri rahisi ya Git isiyo na maneno mengi
-    os.system("git add . && git commit -m 'offline' --quiet && git push origin master --quiet")
+def get_trend(timeframe):
+    try:
+        bars = exchange.fetch_ohlcv(SYMBOL, timeframe=timeframe, limit=50)
+        df = pd.DataFrame(bars, columns=['t','o','h','l','c','v'])
+        ema9 = ta.trend.ema_indicator(df['c'], 9).iloc[-1]
+        ema21 = ta.trend.ema_indicator(df['c'], 21).iloc[-1]
+        price = df['c'].iloc[-1]
+        return "UP" if price > ema9 > ema21 else "DOWN" if price < ema9 < ema21 else "SIDE"
+    except: return "N/A"
 
-atexit.register(signal_offline)
+def signal_stop():
+    # Inatuma STOPPED bila maneno mengi
+    try:
+        data = {"status": "STOPPED", "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        with open("data.json", "w") as f: json.dump(data, f)
+        os.system("git add . && git commit -m 'stop' --quiet && git push origin master --quiet")
+    except: pass
+
+atexit.register(signal_stop)
 
 # ================= MAIN LOOP =================
 while True:
@@ -35,51 +46,56 @@ while True:
         live_price = ticker['last']
         balance = exchange.fetch_balance()
         
+        # Balance & Indicators
         usdt_total = balance['total'].get('USDT', 0.0)
         margin_balance = float(balance['info']['assets'][0]['marginBalance']) if 'info' in balance else usdt_total
         
-        df15 = exchange.fetch_ohlcv(SYMBOL, timeframe='15m', limit=50)
-        df = pd.DataFrame(df15, columns=['t','o','h','l','c','v'])
-        ema9 = ta.trend.ema_indicator(df['c'], 9).iloc[-1]
-        ema21 = ta.trend.ema_indicator(df['c'], 21).iloc[-1]
-        adx = ta.trend.ADXIndicator(df['h'], df['l'], df['c']).adx().iloc[-1]
+        t15 = get_trend('15m')
+        t5 = get_trend('5m')
+        t1 = get_trend('1m')
         
-        trend = "UP" if live_price > ema9 > ema21 else "DOWN" if live_price < ema9 < ema21 else "SIDE"
+        # Logic ya Reason
+        reason = "Waiting for EMA alignment"
+        if t15 == t5 == t1 != "SIDE":
+            reason = f"Ready for {t15} Signal"
 
-        in_trade, side, pnl_pct, margin_used = False, "NONE", 0.0, 0.0
+        # Position Tracking
+        in_trade, side, pnl_pct = False, "NONE", 0.0
         for pos in balance['info'].get('positions', []):
-            if pos['symbol'] == SYMBOL.replace('/', ''):
-                amt = float(pos['positionAmt'])
-                if amt != 0:
-                    in_trade, side = True, ("LONG" if amt > 0 else "SHORT")
-                    entry_p = float(pos['entryPrice'])
-                    lev = int(pos['leverage'])
-                    dist = ((live_price - entry_p) / entry_p) * 100
-                    pnl_pct = dist * lev if side == "LONG" else -dist * lev
-                    margin_used = (abs(amt) * live_price) / lev
+            if pos['symbol'] == SYMBOL.replace('/', '') and float(pos['positionAmt']) != 0:
+                in_trade = True
+                side = "LONG" if float(pos['positionAmt']) > 0 else "SHORT"
+                entry = float(pos['entryPrice'])
+                lev = int(pos['leverage'])
+                dist = ((live_price - entry) / entry) * 100
+                pnl_pct = dist * lev if side == "LONG" else -dist * lev
+                reason = f"Executing {side} trade"
 
-        # CMD DISPLAY (CLEAN)
+        # CMD DASHBOARD
         os.system('cls' if os.name == 'nt' else 'clear')
         print(f"🚀 JASTON MASTER PRO | {datetime.now().strftime('%H:%M:%S')}")
         print(f"💰 WALLET: ${usdt_total:.2f} | MARGIN: ${margin_balance:.2f}")
-        print(f"💵 BTC PRICE: ${live_price:,.2f} | ADX: {adx:.1f}")
+        print(f"💵 BTC PRICE: ${live_price:,.2f}")
         print("-" * 50)
-        print(f"📊 TREND 15M: {trend} | STATUS: ONLINE")
-        if in_trade: print(f"✅ EXECUTED: {side} | PnL: {pnl_pct:+.2f}%")
+        print(f"📊 TREND 15M: {t15}")
+        print(f"📊 TREND 05M: {t5}")
+        print(f"📊 TREND 01M: {t1}")
+        print("-" * 50)
+        print(f"💡 STATUS: {'IN TRADE' if in_trade else 'SCANNING'}")
+        print(f"📝 REASON: {reason}")
+        if in_trade: print(f"📈 LIVE PnL: {pnl_pct:+.2f}%")
         print("-" * 50)
 
-        # SAVE DATA (Safe format)
+        # SAVE & SYNC
         data = {
-            "status": "ONLINE",
-            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "wallet": usdt_total, "margin_balance": margin_balance,
-            "price": live_price, "trend": trend, "adx": adx,
-            "in_trade": in_trade, "side": side, "pnl": pnl_pct, "margin_used": margin_used,
-            "reason": "Scanning..."
+            "status": "ONLINE", "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "wallet": usdt_total, "margin_balance": margin_balance, "price": live_price,
+            "t15": t15, "t5": t5, "t1": t1, "in_trade": in_trade, "side": side, 
+            "pnl": pnl_pct, "reason": reason
         }
         with open("data.json", "w") as f: json.dump(data, f)
-        
         os.system("git add . && git commit -m 'sync' --quiet && git push origin master --quiet")
+        
         time.sleep(10)
-    except Exception as e:
-        time.sleep(5)
+    except Exception:
+        time.sleep(10)

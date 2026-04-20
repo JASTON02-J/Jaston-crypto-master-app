@@ -21,7 +21,6 @@ RISK_PER_TRADE = 0.02
 
 STOP_LOSS = 0.01
 TAKE_PROFIT = 0.025
-TRAILING = 0.008
 
 COOLDOWN = 60
 
@@ -43,7 +42,11 @@ MEMORY_FILE = "bot_memory.json"
 def load_memory():
 
     if os.path.exists(MEMORY_FILE):
-        return json.load(open(MEMORY_FILE))
+
+        try:
+            return json.load(open(MEMORY_FILE))
+        except:
+            pass
 
     return {
         "trades":0,
@@ -65,14 +68,19 @@ memory = load_memory()
 
 def position_open(symbol):
 
-    positions = exchange.fetch_positions()
+    try:
 
-    for p in positions:
+        positions = exchange.fetch_positions()
 
-        if p['symbol'] == symbol.replace("/",""):
+        for p in positions:
 
-            if float(p['contracts']) > 0:
-                return True
+            if p['symbol'] == symbol.replace("/",""):
+
+                if float(p['contracts']) > 0:
+                    return True
+
+    except:
+        pass
 
     return False
 
@@ -80,167 +88,189 @@ def position_open(symbol):
 
 def get_data(symbol,tf):
 
-    bars = exchange.fetch_ohlcv(symbol,tf,limit=150)
+    try:
 
-    df = pd.DataFrame(bars,columns=['t','o','h','l','c','v'])
+        bars = exchange.fetch_ohlcv(symbol,tf,limit=150)
 
-    df[['o','h','l','c','v']] = df[['o','h','l','c','v']].astype(float)
+        if bars is None or len(bars) < 50:
+            return None
 
-    return df
+        df = pd.DataFrame(bars,columns=['t','o','h','l','c','v'])
+
+        df[['o','h','l','c','v']] = df[['o','h','l','c','v']].astype(float)
+
+        return df
+
+    except Exception as e:
+
+        print("DATA ERROR:",symbol,str(e))
+
+        return None
 
 # ================= MARKET ANALYSIS =================
 
 def analyze_market(symbol):
 
-    df = get_data(symbol,TIMEFRAME)
-    htf = get_data(symbol,HTF)
+    try:
 
-    df['ema9'] = ta.trend.ema_indicator(df['c'],9)
-    df['ema21'] = ta.trend.ema_indicator(df['c'],21)
+        df = get_data(symbol,TIMEFRAME)
+        htf = get_data(symbol,HTF)
 
-    df['rsi'] = ta.momentum.RSIIndicator(df['c'],14).rsi()
-    df['adx'] = ta.trend.ADXIndicator(df['h'],df['l'],df['c'],14).adx()
+        if df is None or htf is None:
+            return None
 
-    df['vol_ma'] = df['v'].rolling(20).mean()
+        df['ema9'] = ta.trend.ema_indicator(df['c'],9)
+        df['ema21'] = ta.trend.ema_indicator(df['c'],21)
 
-    htf['ema50'] = ta.trend.ema_indicator(htf['c'],50)
-    htf['ema200'] = ta.trend.ema_indicator(htf['c'],200)
+        df['rsi'] = ta.momentum.RSIIndicator(df['c'],14).rsi()
+        df['adx'] = ta.trend.ADXIndicator(df['h'],df['l'],df['c'],14).adx()
 
-    df = df.dropna()
-    htf = htf.dropna()
+        df['vol_ma'] = df['v'].rolling(20).mean()
 
-    last = df.iloc[-1]
-    last_htf = htf.iloc[-1]
+        htf['ema50'] = ta.trend.ema_indicator(htf['c'],50)
+        htf['ema200'] = ta.trend.ema_indicator(htf['c'],200)
 
-    price = last['c']
+        df = df.dropna()
+        htf = htf.dropna()
 
-    ema9 = last['ema9']
-    ema21 = last['ema21']
+        if len(df) == 0 or len(htf) == 0:
+            return None
 
-    rsi = last['rsi']
-    adx = last['adx']
+        last = df.iloc[-1]
+        last_htf = htf.iloc[-1]
 
-    volume = last['v']
-    vol_ma = last['vol_ma']
+        price = float(last['c'])
 
-    htf_trend = "UP" if last_htf['ema50'] > last_htf['ema200'] else "DOWN"
+        ema9 = float(last['ema9'])
+        ema21 = float(last['ema21'])
 
-    signal = "NONE"
+        rsi = float(last['rsi'])
+        adx = float(last['adx'])
 
-    score = 0
+        volume = float(last['v'])
+        vol_ma = float(last['vol_ma'])
 
-    # TREND
+        htf_trend = "UP" if last_htf['ema50'] > last_htf['ema200'] else "DOWN"
 
-    if ema9 > ema21 and htf_trend == "UP":
-        signal = "BUY"
-        score += 1
+        signal = "NONE"
+        score = 0
 
-    if ema9 < ema21 and htf_trend == "DOWN":
-        signal = "SELL"
-        score += 1
+        if ema9 > ema21 and htf_trend == "UP":
+            signal = "BUY"
+            score += 1
 
-    # MOMENTUM
+        elif ema9 < ema21 and htf_trend == "DOWN":
+            signal = "SELL"
+            score += 1
 
-    if rsi > 55 or rsi < 45:
-        score += 1
+        if rsi > 55 or rsi < 45:
+            score += 1
 
-    # TREND STRENGTH
+        if adx > 20:
+            score += 1
 
-    if adx > 20:
-        score += 1
+        if volume > vol_ma:
+            score += 1
 
-    # VOLUME SPIKE
+        confidence = (score/4)*100
 
-    if volume > vol_ma:
-        score += 1
+        return {
 
-    confidence = (score/4)*100
+            "symbol":symbol,
+            "price":price,
+            "signal":signal,
+            "confidence":confidence,
+            "rsi":rsi,
+            "adx":adx
+        }
 
-    return {
+    except Exception as e:
 
-        "symbol":symbol,
-        "price":price,
-        "signal":signal,
-        "confidence":confidence,
-        "rsi":rsi,
-        "adx":adx
-    }
+        print("ANALYSIS ERROR:",symbol,str(e))
+
+        return None
 
 # ================= EXECUTE TRADE =================
 
 def execute_trade(data):
 
-    symbol = data["symbol"]
-    signal = data["signal"]
-    price = data["price"]
+    try:
 
-    balance = exchange.fetch_balance()
+        symbol = data["symbol"]
+        signal = data["signal"]
+        price = data["price"]
 
-    usdt = balance['USDT']['free']
+        balance = exchange.fetch_balance()
 
-    risk_amount = usdt * RISK_PER_TRADE
+        usdt = balance['USDT']['free']
 
-    size = risk_amount / price
+        risk_amount = usdt * RISK_PER_TRADE
 
-    if signal == "BUY":
+        size = risk_amount / price
 
-        order = exchange.create_market_buy_order(symbol,size)
+        if signal == "BUY":
 
-        sl = price*(1-STOP_LOSS)
-        tp = price*(1+TAKE_PROFIT)
+            order = exchange.create_market_buy_order(symbol,size)
 
-    else:
+            sl = price*(1-STOP_LOSS)
+            tp = price*(1+TAKE_PROFIT)
 
-        order = exchange.create_market_sell_order(symbol,size)
+        else:
 
-        sl = price*(1+STOP_LOSS)
-        tp = price*(1-TAKE_PROFIT)
+            order = exchange.create_market_sell_order(symbol,size)
 
-    amount = order['amount']
+            sl = price*(1+STOP_LOSS)
+            tp = price*(1-TAKE_PROFIT)
 
-    if signal == "BUY":
+        amount = order['amount']
 
-        exchange.create_order(
-            symbol,
-            'STOP_MARKET',
-            'sell',
-            amount,
-            None,
-            {'stopPrice':sl}
-        )
+        if signal == "BUY":
 
-        exchange.create_order(
-            symbol,
-            'TAKE_PROFIT_MARKET',
-            'sell',
-            amount,
-            None,
-            {'stopPrice':tp}
-        )
+            exchange.create_order(
+                symbol,
+                'STOP_MARKET',
+                'sell',
+                amount,
+                None,
+                {'stopPrice':sl}
+            )
 
-    else:
+            exchange.create_order(
+                symbol,
+                'TAKE_PROFIT_MARKET',
+                'sell',
+                amount,
+                None,
+                {'stopPrice':tp}
+            )
 
-        exchange.create_order(
-            symbol,
-            'STOP_MARKET',
-            'buy',
-            amount,
-            None,
-            {'stopPrice':sl}
-        )
+        else:
 
-        exchange.create_order(
-            symbol,
-            'TAKE_PROFIT_MARKET',
-            'buy',
-            amount,
-            None,
-            {'stopPrice':tp}
-        )
+            exchange.create_order(
+                symbol,
+                'STOP_MARKET',
+                'buy',
+                amount,
+                None,
+                {'stopPrice':sl}
+            )
 
-    memory["trades"] += 1
-    memory["last_trade"] = symbol + " " + signal
-    memory["last_trade_time"] = time.time()
+            exchange.create_order(
+                symbol,
+                'TAKE_PROFIT_MARKET',
+                'buy',
+                amount,
+                None,
+                {'stopPrice':tp}
+            )
+
+        memory["trades"] += 1
+        memory["last_trade"] = symbol + " " + signal
+        memory["last_trade_time"] = time.time()
+
+    except Exception as e:
+
+        print("TRADE ERROR:",str(e))
 
 # ================= DASHBOARD =================
 
@@ -249,8 +279,8 @@ def dashboard(results,best):
     os.system('cls' if os.name=='nt' else 'clear')
 
     print("==============================================================")
-    print("                JASTON MASTER TRADE")
-    print("        Advanced AI Futures Trading Engine")
+    print("                 JASTON MASTER TRADE")
+    print("          Advanced AI Futures Trading Engine")
     print("==============================================================")
 
     print("TIME:",datetime.now().strftime('%H:%M:%S'))
@@ -258,6 +288,9 @@ def dashboard(results,best):
     print("--------------------------------------------------------------")
 
     for r in results:
+
+        if r is None:
+            continue
 
         print(
         f"{r['symbol']} | {r['signal']} | "
@@ -278,7 +311,7 @@ def dashboard(results,best):
 
     winrate = 0
 
-    if trades>0:
+    if trades > 0:
         winrate = (wins/trades)*100
 
     print("📊 BOT STATISTICS")
@@ -304,7 +337,14 @@ while True:
 
             data = analyze_market(s)
 
-            results.append(data)
+            if data is not None:
+                results.append(data)
+
+        if len(results) == 0:
+
+            print("No market data yet...")
+            time.sleep(10)
+            continue
 
         best = max(results,key=lambda x:x["confidence"])
 
@@ -324,6 +364,6 @@ while True:
 
     except Exception as e:
 
-        print("ERROR:",e)
+        print("MAIN LOOP ERROR:",str(e))
 
         time.sleep(10)

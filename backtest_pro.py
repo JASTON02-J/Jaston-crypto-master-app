@@ -16,7 +16,7 @@ TAKE_PROFIT = 0.025
 RISK_PER_TRADE = 0.02
 
 INITIAL_BALANCE = 10
-COOLDOWN = 300  # improved (5 min)
+COOLDOWN = 300
 
 FEE = 0.0004
 SLIPPAGE = 0.0005
@@ -26,7 +26,7 @@ exchange = ccxt.binance({"enableRateLimit": True})
 # ================= DATA =================
 
 def get_data(pair, tf):
-    bars = exchange.fetch_ohlcv(pair, tf, limit=500)
+    bars = exchange.fetch_ohlcv(pair, tf, limit=1000)  # FIXED
     df = pd.DataFrame(bars, columns=["time","open","high","low","close","volume"])
     df["time"] = pd.to_datetime(df["time"], unit="ms")
     return df
@@ -80,7 +80,7 @@ equity_curve = []
 
 pair_counter = {}
 last_trade_time = 0
-skip_counter = 0  # NEW
+skip_counter = 0
 
 for pair in PAIRS:
 
@@ -99,7 +99,12 @@ for pair in PAIRS:
         direction="backward"
     )
 
-    df = df.dropna()
+    # FIX: usifute data zote
+    df = df.dropna(subset=["ema9","ema21","rsi","adx","ema50","ema200"])
+
+    # SAFETY: kama data haitoshi
+    if len(df) < 100:
+        continue
 
     position = None
 
@@ -180,7 +185,6 @@ for pair in PAIRS:
         if position:
 
             entry = position["entry"]
-            lev = position["leverage"]
 
             if position["type"] == "LONG":
                 sl = entry * (1 - STOP_LOSS)
@@ -189,10 +193,7 @@ for pair in PAIRS:
                 hit_sl = row["low"] <= sl
                 hit_tp = row["high"] >= tp
 
-                if hit_sl and hit_tp:
-                    pnl = -STOP_LOSS
-                    reason = "SL/TP same candle"
-                elif hit_sl:
+                if hit_sl:
                     pnl = -STOP_LOSS
                     reason = "SL"
                 elif hit_tp:
@@ -209,10 +210,7 @@ for pair in PAIRS:
                 hit_sl = row["high"] >= sl
                 hit_tp = row["low"] <= tp
 
-                if hit_sl and hit_tp:
-                    pnl = -STOP_LOSS
-                    reason = "SL/TP same candle"
-                elif hit_sl:
+                if hit_sl:
                     pnl = -STOP_LOSS
                     reason = "SL"
                 elif hit_tp:
@@ -227,7 +225,7 @@ for pair in PAIRS:
             risk_amount = balance * RISK_PER_TRADE
             gross_profit = risk_amount * (pnl / STOP_LOSS)  # FIXED
 
-            fee_cost = risk_amount * FEE * 2  # FIXED
+            fee_cost = risk_amount * FEE * 2
             profit = gross_profit - fee_cost
 
             balance += profit
@@ -246,7 +244,7 @@ for pair in PAIRS:
 
         equity_curve.append(balance)
 
-# ================= DASHBOARD =================
+# ================= DASHBOARD (USIGUSE) =================
 
 print("\n🚀 JASTON FORENSIC BACKTEST (LIVE MIRROR MODE)")
 print("============================================================")
@@ -284,9 +282,6 @@ print("\n📊 ADVANCED METRICS")
 print("Wins:", wins)
 print("Losses:", losses)
 print("Winrate:", round(winrate,2), "%")
-
-# ADDED (SAFE)
-print("⛔ Skipped Trades:", skip_counter)
 
 plt.plot(equity_curve)
 plt.title("Equity Curve")

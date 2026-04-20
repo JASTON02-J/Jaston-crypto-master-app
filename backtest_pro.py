@@ -23,20 +23,20 @@ INITIAL_BALANCE = 10
 # ================= EXCHANGE =================
 
 exchange = ccxt.binance({
-"enableRateLimit":True
+"enableRateLimit": True
 })
 
 # ================= DATA =================
 
-def get_data(pair,tf):
+def get_data(pair, tf):
 
-    bars = exchange.fetch_ohlcv(pair,tf,limit=500)
+    bars = exchange.fetch_ohlcv(pair, tf, limit=500)
 
-    df = pd.DataFrame(bars,columns=[
-    "time","open","high","low","close","volume"
+    df = pd.DataFrame(bars, columns=[
+        "time","open","high","low","close","volume"
     ])
 
-    df["time"] = pd.to_datetime(df["time"],unit="ms")
+    df["time"] = pd.to_datetime(df["time"], unit="ms")
 
     return df
 
@@ -50,10 +50,10 @@ def indicators(df):
     df["rsi"] = ta.momentum.RSIIndicator(df["close"],14).rsi()
 
     adx = ta.trend.ADXIndicator(
-    df["high"],
-    df["low"],
-    df["close"],
-    14
+        df["high"],
+        df["low"],
+        df["close"],
+        14
     )
 
     df["adx"] = adx.adx()
@@ -64,132 +64,135 @@ def indicators(df):
 
 # ================= BACKTEST =================
 
-trades=[]
-
+trades = []
 balance = INITIAL_BALANCE
-
-pair_counter={}
+pair_counter = {}
 
 for pair in PAIRS:
 
-    df = get_data(pair,TIMEFRAME)
-    htf = get_data(pair,HTF)
+    try:
 
-    df = indicators(df)
+        df = get_data(pair, TIMEFRAME)
+        htf = get_data(pair, HTF)
 
-    htf["ema50"]=ta.trend.ema_indicator(htf["close"],50)
-    htf["ema200"]=ta.trend.ema_indicator(htf["close"],200)
+        df = indicators(df)
 
-    df=df.dropna()
-    htf=htf.dropna()
+        htf["ema50"] = ta.trend.ema_indicator(htf["close"],50)
+        htf["ema200"] = ta.trend.ema_indicator(htf["close"],200)
 
-    position=None
+        df = df.dropna()
+        htf = htf.dropna()
 
-    for i in range(50,len(df)):
+        position = None
 
-        row=df.iloc[i]
+        for i in range(50, len(df)):
 
-        price=row["close"]
+            row = df.iloc[i]
 
-        ema9=row["ema9"]
-        ema21=row["ema21"]
+            price = row["close"]
 
-        rsi=row["rsi"]
-        adx=row["adx"]
+            ema9 = row["ema9"]
+            ema21 = row["ema21"]
 
-        volume=row["volume"]
-        vol_ma=row["vol_ma"]
+            rsi = row["rsi"]
+            adx = row["adx"]
 
-        htf_row=htf.iloc[min(i,len(htf)-1)]
+            volume = row["volume"]
+            vol_ma = row["vol_ma"]
 
-        trend="UP" if htf_row["ema50"]>htf_row["ema200"] else "DOWN"
+            htf_row = htf.iloc[min(i, len(htf)-1)]
 
-        signal=None
-        score=0
+            trend = "UP" if htf_row["ema50"] > htf_row["ema200"] else "DOWN"
 
-        if ema9>ema21 and trend=="UP":
-            signal="LONG"
-            score+=1
+            signal = None
+            score = 0
 
-        elif ema9<ema21 and trend=="DOWN":
-            signal="SHORT"
-            score+=1
+            if ema9 > ema21 and trend == "UP":
+                signal = "LONG"
+                score += 1
 
-        if rsi>55 or rsi<45:
-            score+=1
+            elif ema9 < ema21 and trend == "DOWN":
+                signal = "SHORT"
+                score += 1
 
-        if adx>20:
-            score+=1
+            if rsi > 55 or rsi < 45:
+                score += 1
 
-        if volume>vol_ma:
-            score+=1
+            if adx > 20:
+                score += 1
 
-        confidence=(score/4)*100
+            if volume > vol_ma:
+                score += 1
 
-        if position is None and confidence>=75:
+            confidence = (score / 4) * 100
 
-            position={
-            "pair":pair,
-            "type":signal,
-            "entry":price,
-            "entry_time":row["time"]
-            }
+            if position is None and confidence >= 75:
 
-        if position:
+                position = {
+                    "pair": pair,
+                    "type": signal,
+                    "entry": price,
+                    "entry_time": row["time"]
+                }
 
-            entry=position["entry"]
+            if position:
 
-            if position["type"]=="LONG":
+                entry = position["entry"]
 
-                sl=entry*(1-STOP_LOSS)
-                tp=entry*(1+TAKE_PROFIT)
+                if position["type"] == "LONG":
 
-                if row["low"]<=sl:
+                    sl = entry * (1 - STOP_LOSS)
+                    tp = entry * (1 + TAKE_PROFIT)
 
-                    pnl=-STOP_LOSS
-                    reason="SL"
+                    if row["low"] <= sl:
 
-                elif row["high"]>=tp:
+                        pnl = -STOP_LOSS
+                        reason = "SL"
 
-                    pnl=TAKE_PROFIT
-                    reason="TP"
+                    elif row["high"] >= tp:
 
-                else:
-                    continue
+                        pnl = TAKE_PROFIT
+                        reason = "TP"
 
-            else:
-
-                sl=entry*(1+STOP_LOSS)
-                tp=entry*(1-TAKE_PROFIT)
-
-                if row["high"]>=sl:
-
-                    pnl=-STOP_LOSS
-                    reason="SL"
-
-                elif row["low"]<=tp:
-
-                    pnl=TAKE_PROFIT
-                    reason="TP"
+                    else:
+                        continue
 
                 else:
-                    continue
 
-            profit=balance*pnl
-            balance+=profit
+                    sl = entry * (1 + STOP_LOSS)
+                    tp = entry * (1 - TAKE_PROFIT)
 
-            trades.append([
-            pair,
-            position["type"],
-            position["entry_time"],
-            row["time"],
-            round(profit,3),
-            reason
-            ])
+                    if row["high"] >= sl:
 
-            pair_counter[pair]=pair_counter.get(pair,0)+1
+                        pnl = -STOP_LOSS
+                        reason = "SL"
 
-            position=None
+                    elif row["low"] <= tp:
+
+                        pnl = TAKE_PROFIT
+                        reason = "TP"
+
+                    else:
+                        continue
+
+                profit = balance * pnl
+                balance += profit
+
+                trades.append({
+                    "coin": pair,
+                    "type": position["type"],
+                    "entry": position["entry_time"],
+                    "exit": row["time"],
+                    "pnl": profit,
+                    "reason": reason
+                })
+
+                pair_counter[pair] = pair_counter.get(pair,0) + 1
+
+                position = None
+
+    except Exception as e:
+        print("Pair error:", pair, e)
 
 # ================= DASHBOARD =================
 
@@ -199,25 +202,32 @@ print("============================================================")
 print("COIN        TYPE     ENTRY TIME          EXIT TIME           PnL     REASON")
 print("--------------------------------------------------------------------------")
 
-for t in trades[:10]:
+for t in trades:
 
-    coin,typ,entry,exit,pnl,reason=t
+    coin = t["coin"]
+    typ = t["type"]
+    entry = t["entry"]
+    exit_time = t["exit"]
+    pnl = t["pnl"]
+    reason = t["reason"]
 
-    print(f"{coin:<10} {typ:<7} {entry}  {exit}  {pnl:+.3f}   {reason}")
+    if pnl is None:
+        pnl = 0
+
+    print(f"{coin:<10} {typ:<7} {entry}  {exit_time}  {pnl:+.3f}   {reason}")
 
 print("==========================================================================")
 
-print("\n🚀 TOTAL TRADES:",len(trades))
-print("💰 INITIAL: $",INITIAL_BALANCE)
-print("💰 FINAL: $",round(balance,2))
-print("📈 NET PROFIT: $",round(balance-INITIAL_BALANCE,4))
+print("\n🚀 TOTAL TRADES:", len(trades))
+print("💰 INITIAL: $", INITIAL_BALANCE)
+print("💰 FINAL: $", round(balance,2))
+print("📈 NET PROFIT: $", round(balance-INITIAL_BALANCE,4))
 
 print("\n🧠 TRADE ANALYSIS MODE")
 
 if pair_counter:
 
-    most=max(pair_counter,key=pair_counter.get)
-
-    print("📊 MOST ACTIVE MARKET:",most)
+    most = max(pair_counter, key=pair_counter.get)
+    print("📊 MOST ACTIVE MARKET:", most)
 
 print("\n⚠ NOTE: These timestamps can be cross-checked on TradingView for validation")

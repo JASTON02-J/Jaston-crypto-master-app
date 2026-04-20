@@ -21,11 +21,13 @@ HTF = "15m"
 
 RISK_PER_TRADE = 0.02
 STOP_LOSS = 0.01
-TAKE_PROFIT = 0.025
-COOLDOWN = 60
 
-MEMORY_FILE = "bot_memory.json"
-HISTORY_FILE = "trade_history.json"
+MAX_DRAWDOWN = 10
+ALERT_LEVELS = [5,7,9]
+
+bot_running = True
+initial_balance = None
+alerted_levels = set()
 
 # ================= EXCHANGE =================
 
@@ -38,255 +40,204 @@ exchange = ccxt.binance({
 
 exchange.load_markets()
 
-# ================= MEMORY =================
-
-def load_memory():
-    if os.path.exists(MEMORY_FILE):
-        try:
-            return json.load(open(MEMORY_FILE))
-        except:
-            pass
-    return {"trades":0,"wins":0,"losses":0,"pnl":0,"last_trade":"NONE","last_trade_time":0}
-
-def save_memory(data):
-    with open(MEMORY_FILE,"w") as f:
-        json.dump(data,f)
-
-memory = load_memory()
-
-# ================= HISTORY =================
-
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        try:
-            return json.load(open(HISTORY_FILE))
-        except:
-            pass
-    return []
-
-def save_history(data):
-    with open(HISTORY_FILE,"w") as f:
-        json.dump(data,f)
-
-history = load_history()
-
 # ================= WALLET =================
 
-def get_wallet_info():
+def get_wallet():
+    b = exchange.fetch_balance()
+    return b["USDT"]["total"], b["USDT"]["free"]
+
+# ================= RISK ENGINE =================
+
+def drawdown(current):
+    if initial_balance == 0:
+        return 0
+    return ((initial_balance - current)/initial_balance)*100
+
+def alert(msg):
+    print("ALERT:", msg)
+
+def close_all():
     try:
-        balance = exchange.fetch_balance()
-        wallet = balance["USDT"]["free"]
-        margin = balance["USDT"].get("used",0)
-        return wallet, margin
+        for p in exchange.fetch_positions():
+            size = float(p.get("contracts") or 0)
+            if size == 0:
+                continue
+            side = "sell" if size > 0 else "buy"
+            exchange.create_market_order(p["symbol"], side, abs(size))
     except:
-        return 0,0
+        pass
+
+def shutdown():
+    global bot_running
+    alert("🛑 10% loss reached - bot stopped")
+    close_all()
+    bot_running = False
+
+# ================= MIN TRADE =================
+
+def min_trade(symbol):
+    try:
+        m = exchange.market(symbol)
+        base = m['limits']['cost']['min'] or 5
+        fee = m.get('taker',0.0004)
+        return round(base*(1+fee*2),2)
+    except:
+        return 5
+
+# ================= LIQUIDATION RISK ENGINE =================
+
+def liquidation_risk(vol, lev):
+
+    # proxy model: high leverage + high volatility = danger
+    risk = vol * lev
+
+    if risk < 5:
+        return "LOW"
+    elif risk < 10:
+        return "MEDIUM"
+    elif risk < 15:
+        return "HIGH"
+    else:
+        return "DANGER"
+
+# ================= SMART LEVERAGE =================
+
+def smart_leverage(conf, vol, balance):
+
+    base = 5
+
+    if conf >= 90:
+        base = 12
+    elif conf >= 80:
+        base = 10
+
+    # volatility penalty
+    if vol > 1.5:
+        base -= 4
+    elif vol > 1.0:
+        base -= 2
+
+    # balance protection
+    if balance < 50:
+        base = min(base,5)
+    elif balance < 200:
+        base = min(base,7)
+    elif balance < 1000:
+        base = min(base,10)
+
+    return max(3, base)
 
 # ================= DATA =================
 
-def get_data(symbol,tf):
-    try:
-        bars = exchange.fetch_ohlcv(symbol,tf,limit=200)
-        df = pd.DataFrame(bars,columns=["t","o","h","l","c","v"])
-        df[["o","h","l","c","v"]] = df[["o","h","l","c","v"]].astype(float)
-        return df
-    except:
-        return None
-
-# ================= VOLATILITY ENGINE =================
-
-def calculate_volatility(df):
-    df["return"] = df["c"].pct_change()
-    vol = df["return"].rolling(14).std().iloc[-1]
-    return abs(vol*100) if not pd.isna(vol) else 0
-
-
-def classify_volatility(vol):
-
-    if vol < 0.2:
-        return "LOW", "SAFE"
-    elif vol < 0.5:
-        return "NORMAL", "SAFE"
-    elif vol < 1.0:
-        return "MEDIUM", "CAUTION"
-    elif vol < 2.0:
-        return "HIGH", "RISKY"
-    else:
-        return "EXTREME", "DANGER"
-
-# ================= LEVERAGE SYSTEM =================
-
-def get_leverage_and_mode(conf, vol):
-
-    leverage = 5
-    mode = "cross"
-
-    if conf >= 90:
-        leverage = 12 if vol < 0.3 else 7
-        mode = "isolated"
-    elif conf >= 80:
-        leverage = 10 if vol < 0.3 else 5
-        mode = "isolated"
-    else:
-        leverage = 5
-        mode = "cross"
-
-    return leverage, mode
+def data(symbol):
+    bars = exchange.fetch_ohlcv(symbol,TIMEFRAME,limit=200)
+    df = pd.DataFrame(bars,columns=["t","o","h","l","c","v"])
+    df[["o","h","l","c","v"]] = df[["o","h","l","c","v"]].astype(float)
+    return df
 
 # ================= ANALYSIS =================
 
-def analyze_market(symbol):
+def analyze(symbol):
 
-    df = get_data(symbol,TIMEFRAME)
-    htf = get_data(symbol,HTF)
-
-    if df is None or htf is None:
-        return None
+    df = data(symbol)
+    htf = data(symbol)
 
     df["ema9"] = ta.trend.ema_indicator(df["c"],9)
     df["ema21"] = ta.trend.ema_indicator(df["c"],21)
     df["rsi"] = ta.momentum.RSIIndicator(df["c"],14).rsi()
     df["adx"] = ta.trend.ADXIndicator(df["h"],df["l"],df["c"],14).adx()
-    df["vol_ma"] = df["v"].rolling(20).mean()
-
-    htf["ema50"] = ta.trend.ema_indicator(htf["c"],50)
-    htf["ema200"] = ta.trend.ema_indicator(htf["c"],200)
 
     df = df.dropna()
-    htf = htf.dropna()
 
     last = df.iloc[-1]
-    last_htf = htf.iloc[-1]
-
-    price = float(last["c"])
-    rsi = float(last["rsi"])
-    adx = float(last["adx"])
-    volume = float(last["v"])
-    vol_ma = float(last["vol_ma"])
-
-    trend = "UP" if last_htf["ema50"] > last_htf["ema200"] else "DOWN"
 
     signal = "NONE"
     score = 0
 
-    if last["ema9"] > last["ema21"] and trend == "UP":
-        signal = "BUY"
-        score += 2
-    elif last["ema9"] < last["ema21"] and trend == "DOWN":
-        signal = "SELL"
-        score += 2
+    if last["ema9"] > last["ema21"]:
+        signal="BUY"; score+=2
+    else:
+        signal="SELL"; score+=2
 
-    if 50 < rsi < 70:
-        score += 1
-    if adx > 20:
-        score += 2
-    if volume > vol_ma:
-        score += 1
+    if 50 < last["rsi"] < 70: score+=1
+    if last["adx"] > 20: score+=2
 
-    confidence = min((score/6)*100,100)
+    conf = min(score/6*100,100)
 
-    volatility = calculate_volatility(df)
-    volatility_label, risk_level = classify_volatility(volatility)
+    vol = abs(df["c"].pct_change().rolling(14).std().iloc[-1]*100)
 
-    leverage, mode = get_leverage_and_mode(confidence, volatility)
+    balance,_ = get_wallet()
+
+    lev = smart_leverage(conf,vol,balance)
+
+    risk_level = liquidation_risk(vol,lev)
+
+    if risk_level == "DANGER":
+        lev = 3  # force safe mode
 
     return {
         "symbol":symbol,
-        "price":price,
         "signal":signal,
-        "confidence":confidence,
-        "rsi":rsi,
-        "adx":adx,
-        "volatility":volatility,
-        "volatility_label":volatility_label,
-        "risk_level":risk_level,
-        "leverage":leverage,
-        "mode":mode
+        "confidence":conf,
+        "vol":vol,
+        "leverage":lev,
+        "risk":risk_level,
+        "price":float(last["c"])
     }
 
-# ================= LIVE POSITIONS =================
-
-def get_live_positions():
-
-    try:
-        positions = exchange.fetch_positions()
-        live = []
-
-        for p in positions:
-            size = float(p.get("contracts") or 0)
-            if size == 0:
-                continue
-
-            live.append({
-                "symbol": p["symbol"],
-                "entry": float(p.get("entryPrice") or 0),
-                "current": float(p.get("markPrice") or 0),
-                "pnl": float(p.get("unrealizedPnl") or 0),
-                "leverage": float(p.get("leverage") or 0),
-                "liquidation": p.get("liquidationPrice","N/A")
-            })
-
-        return live
-
-    except:
-        return []
-
-# ================= DASHBOARD (UNCHANGED) =================
+# ================= DASHBOARD =================
 
 def dashboard(results,best):
 
-    wallet, margin = get_wallet_info()
+    total,_ = get_wallet()
 
     os.system("cls" if os.name=="nt" else "clear")
 
     print("===================================================")
     print("              JASTON MASTER TRADE")
-    print("        Advanced AI Futures Trading Engine")
     print("===================================================")
 
     print("TIME:",datetime.now().strftime("%H:%M:%S"))
 
     for r in results:
-        print(f"{r['symbol']} | {r['signal']} | Conf {r['confidence']:.1f}% | RSI {r['rsi']:.1f} | ADX {r['adx']:.1f}")
+        print(f"{r['symbol']} | {r['signal']} | Conf {r['confidence']:.1f}%")
 
     print("---------------------------------------------------")
-    print("🔥 BEST:",best["symbol"],best["signal"],best["confidence"])
-    print("💰 Wallet:",wallet,"USDT")
+    print("🔥 BEST:",best["symbol"])
     print("⚡ Leverage:",best["leverage"])
-    print("🧭 Mode:",best["mode"])
 
-    # ================= ONLY ADDITIONS BELOW =================
+    print("🛡️ Risk Level:",best["risk"])
+    print("📉 Volatility:",best["vol"])
 
-    print("---------------------------------------------------")
-    print("🌊 VOLATILITY:", f"{best['volatility']:.2f}%")
-    print("📊 STATE:", best["volatility_label"])
-    print("⚠️ RISK:", best["risk_level"])
+    print("💰 Wallet:",total)
 
     print("---------------------------------------------------")
-    print("📡 LIVE POSITIONS")
+    print("📊 MIN TRADE")
 
-    live = get_live_positions()
+    for s in SYMBOLS:
+        print(s,"→",min_trade(s))
 
-    for p in live:
-        print(p["symbol"],p["pnl"],p["leverage"],p["entry"],p["current"])
+# ================= INIT =================
 
-    print("---------------------------------------------------")
-    print("📜 CLOSED TRADES")
+initial_balance,_ = get_wallet()
 
-    closed = [h for h in history if h.get("status") == "CLOSED"]
+# ================= LOOP =================
 
-    for c in closed[-5:]:
-        print(c["symbol"],c["side"],c["pnl"])
+while bot_running:
 
-# ================= MAIN LOOP =================
+    balance,_ = get_wallet()
 
-while True:
+    dd = drawdown(balance)
+
+    if dd >= MAX_DRAWDOWN:
+        shutdown()
+        break
 
     results = []
 
     for s in SYMBOLS:
-        data = analyze_market(s)
-        if data:
-            results.append(data)
+        r = analyze(s)
+        results.append(r)
 
     best = max(results,key=lambda x:x["confidence"])
 

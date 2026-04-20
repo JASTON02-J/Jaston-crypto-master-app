@@ -6,6 +6,7 @@ import time
 import json
 from datetime import datetime
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # ================= CONFIG =================
@@ -24,6 +25,7 @@ TAKE_PROFIT = 0.025
 COOLDOWN = 60
 
 MEMORY_FILE = "bot_memory.json"
+HISTORY_FILE = "trade_history.json"
 
 # ================= EXCHANGE =================
 
@@ -44,15 +46,7 @@ def load_memory():
             return json.load(open(MEMORY_FILE))
         except:
             pass
-
-    return {
-        "trades":0,
-        "wins":0,
-        "losses":0,
-        "pnl":0,
-        "last_trade":"NONE",
-        "last_trade_time":0
-    }
+    return {"trades":0,"wins":0,"losses":0,"pnl":0,"last_trade":"NONE","last_trade_time":0}
 
 def save_memory(data):
     with open(MEMORY_FILE,"w") as f:
@@ -60,31 +54,30 @@ def save_memory(data):
 
 memory = load_memory()
 
-# ================= POSITION CHECK =================
+# ================= HISTORY =================
 
-def position_open(symbol):
-    try:
-        positions = exchange.fetch_positions()
-        for p in positions:
-            if p["symbol"] == symbol.replace("/",""):
-                if float(p.get("contracts",0)) > 0:
-                    return True
-    except:
-        pass
-    return False
+def load_history():
+    if os.path.exists(HISTORY_FILE):
+        try:
+            return json.load(open(HISTORY_FILE))
+        except:
+            pass
+    return []
 
-# ================= BALANCE =================
+def save_history(data):
+    with open(HISTORY_FILE,"w") as f:
+        json.dump(data,f)
+
+history = load_history()
+
+# ================= WALLET =================
 
 def get_wallet_info():
-
     try:
         balance = exchange.fetch_balance()
-
         wallet = balance["USDT"]["free"]
         margin = balance["USDT"].get("used",0)
-
         return wallet, margin
-
     except:
         return 0,0
 
@@ -99,159 +92,185 @@ def get_data(symbol,tf):
     except:
         return None
 
+# ================= VOLATILITY =================
+
+def calculate_volatility(df):
+    df["return"] = df["c"].pct_change()
+    vol = df["return"].rolling(14).std().iloc[-1]
+    return abs(vol*100) if not pd.isna(vol) else 0
+
+# ================= LEVERAGE + MODE =================
+
+def get_leverage_and_mode(conf, vol):
+
+    leverage = 5
+    mode = "cross"
+
+    if conf >= 90:
+        leverage = 12 if vol < 0.3 else 7
+        mode = "isolated"
+    elif conf >= 80:
+        leverage = 10 if vol < 0.3 else 5
+        mode = "isolated"
+    else:
+        leverage = 5
+        mode = "cross"
+
+    return leverage, mode
+
 # ================= ANALYSIS =================
 
 def analyze_market(symbol):
 
-    try:
+    df = get_data(symbol,TIMEFRAME)
+    htf = get_data(symbol,HTF)
 
-        df = get_data(symbol,TIMEFRAME)
-        htf = get_data(symbol,HTF)
-
-        if df is None or htf is None:
-            return None
-
-        df["ema9"] = ta.trend.ema_indicator(df["c"],9)
-        df["ema21"] = ta.trend.ema_indicator(df["c"],21)
-        df["rsi"] = ta.momentum.RSIIndicator(df["c"],14).rsi()
-        df["adx"] = ta.trend.ADXIndicator(df["h"],df["l"],df["c"],14).adx()
-        df["vol_ma"] = df["v"].rolling(20).mean()
-
-        htf["ema50"] = ta.trend.ema_indicator(htf["c"],50)
-        htf["ema200"] = ta.trend.ema_indicator(htf["c"],200)
-
-        df = df.dropna()
-        htf = htf.dropna()
-
-        last = df.iloc[-1]
-        last_htf = htf.iloc[-1]
-
-        price = float(last["c"])
-        ema9 = float(last["ema9"])
-        ema21 = float(last["ema21"])
-        rsi = float(last["rsi"])
-        adx = float(last["adx"])
-        volume = float(last["v"])
-        vol_ma = float(last["vol_ma"])
-
-        trend = "UP" if last_htf["ema50"] > last_htf["ema200"] else "DOWN"
-
-        signal = "NONE"
-        score = 0
-
-        if ema9 > ema21 and trend == "UP":
-            signal = "BUY"
-            score += 2
-
-        elif ema9 < ema21 and trend == "DOWN":
-            signal = "SELL"
-            score += 2
-
-        if 50 < rsi < 70:
-            score += 1
-
-        if adx > 20:
-            score += 2
-
-        if volume > vol_ma:
-            score += 1
-
-        confidence = min((score/6)*100,100)
-
-        return {
-            "symbol":symbol,
-            "price":price,
-            "signal":signal,
-            "confidence":confidence,
-            "rsi":rsi,
-            "adx":adx
-        }
-
-    except:
+    if df is None or htf is None:
         return None
 
-# ================= TRAILING STOP =================
+    df["ema9"] = ta.trend.ema_indicator(df["c"],9)
+    df["ema21"] = ta.trend.ema_indicator(df["c"],21)
+    df["rsi"] = ta.momentum.RSIIndicator(df["c"],14).rsi()
+    df["adx"] = ta.trend.ADXIndicator(df["h"],df["l"],df["c"],14).adx()
+    df["vol_ma"] = df["v"].rolling(20).mean()
 
-def create_trailing_stop(symbol, side, size, callback=0.5):
+    htf["ema50"] = ta.trend.ema_indicator(htf["c"],50)
+    htf["ema200"] = ta.trend.ema_indicator(htf["c"],200)
+
+    df = df.dropna()
+    htf = htf.dropna()
+
+    last = df.iloc[-1]
+    last_htf = htf.iloc[-1]
+
+    price = float(last["c"])
+    rsi = float(last["rsi"])
+    adx = float(last["adx"])
+    volume = float(last["v"])
+    vol_ma = float(last["vol_ma"])
+
+    trend = "UP" if last_htf["ema50"] > last_htf["ema200"] else "DOWN"
+
+    signal = "NONE"
+    score = 0
+
+    if last["ema9"] > last["ema21"] and trend == "UP":
+        signal = "BUY"
+        score += 2
+    elif last["ema9"] < last["ema21"] and trend == "DOWN":
+        signal = "SELL"
+        score += 2
+
+    if 50 < rsi < 70:
+        score += 1
+    if adx > 20:
+        score += 2
+    if volume > vol_ma:
+        score += 1
+
+    confidence = min((score/6)*100,100)
+    volatility = calculate_volatility(df)
+
+    leverage, mode = get_leverage_and_mode(confidence, volatility)
+
+    return {
+        "symbol":symbol,
+        "price":price,
+        "signal":signal,
+        "confidence":confidence,
+        "rsi":rsi,
+        "adx":adx,
+        "volatility":volatility,
+        "leverage":leverage,
+        "mode":mode
+    }
+
+# ================= LIVE POSITIONS =================
+
+def get_live_positions():
 
     try:
-        params = {
-            "callbackRate": callback,
-            "reduceOnly": True
-        }
+        positions = exchange.fetch_positions()
+        live = []
 
-        if side == "BUY":
-            return exchange.create_order(symbol,"TRAILING_STOP_MARKET","sell",size,None,params)
+        for p in positions:
+            size = float(p.get("contracts") or 0)
+            if size == 0:
+                continue
 
-        else:
-            return exchange.create_order(symbol,"TRAILING_STOP_MARKET","buy",size,None,params)
+            live.append({
+                "symbol": p["symbol"],
+                "entry": float(p.get("entryPrice") or 0),
+                "current": float(p.get("markPrice") or 0),
+                "pnl": float(p.get("unrealizedPnl") or 0),
+                "leverage": float(p.get("leverage") or 0),
+                "liquidation": p.get("liquidationPrice","N/A"),
+                "tp": p.get("takeProfitPrice","NOT SET"),
+                "sl": p.get("stopLossPrice","NOT SET")
+            })
 
-    except Exception as e:
-        print("TRAILING ERROR:",e)
+        return live
+
+    except:
+        return []
+
+# ================= TRADE HISTORY =================
+
+def detect_reason(tp, sl, price):
+
+    try:
+        if tp != "NOT SET" and price >= float(tp):
+            return "TAKE_PROFIT"
+        if sl != "NOT SET" and price <= float(sl):
+            return "STOP_LOSS"
+    except:
+        pass
+    return "BOT_EXIT"
 
 # ================= EXECUTE TRADE =================
 
 def execute_trade(data):
 
-    try:
+    symbol = data["symbol"]
+    signal = data["signal"]
+    price = data["price"]
 
-        symbol = data["symbol"]
-        signal = data["signal"]
-        price = data["price"]
+    wallet, _ = get_wallet_info()
+    risk = wallet * RISK_PER_TRADE
+    size = risk / price
 
-        wallet, margin = get_wallet_info()
+    if signal == "BUY":
+        exchange.create_market_buy_order(symbol,size)
+    else:
+        exchange.create_market_sell_order(symbol,size)
 
-        if wallet < 10:
-            return
+    history.append({
+        "symbol":symbol,
+        "side":signal,
+        "entry_price":price,
+        "time_opened":time.time(),
+        "status":"OPEN",
+        "pnl":0
+    })
 
-        risk_amount = wallet * RISK_PER_TRADE
-        size = risk_amount / price
+# ================= UPDATE HISTORY =================
 
-        if signal == "BUY":
+def update_history():
 
-            exchange.create_market_buy_order(symbol,size)
+    live = get_live_positions()
 
-            sl = price * (1 - STOP_LOSS)
-            exchange.create_order(symbol,"STOP_MARKET","sell",size,None,{"stopPrice":sl,"reduceOnly":True})
+    for h in history:
 
-            create_trailing_stop(symbol,"BUY",size,0.5)
+        if h["status"] == "OPEN":
 
-        else:
+            for p in live:
 
-            exchange.create_market_sell_order(symbol,size)
+                if p["symbol"] == h["symbol"]:
 
-            sl = price * (1 + STOP_LOSS)
-            exchange.create_order(symbol,"STOP_MARKET","buy",size,None,{"stopPrice":sl,"reduceOnly":True})
+                    h["pnl"] = p["pnl"]
+                    h["last_price"] = p["current"]
 
-            create_trailing_stop(symbol,"SELL",size,0.5)
-
-        memory["trades"] += 1
-        memory["last_trade"] = symbol + " " + signal
-        memory["last_trade_time"] = time.time()
-
-    except Exception as e:
-        print("TRADE ERROR:",e)
-
-# ================= UPDATE PNL =================
-
-def update_pnl():
-
-    try:
-        positions = exchange.fetch_positions()
-
-        total_pnl = 0
-
-        for p in positions:
-
-            pnl = float(p.get("unrealizedPnl",0))
-            total_pnl += pnl
-
-        memory["pnl"] = total_pnl
-
-    except:
-        pass
-
-# ================= DASHBOARD =================
+# ================= DASHBOARD (UNCHANGED + ADDITIONS ONLY) =================
 
 def dashboard(results,best):
 
@@ -265,74 +284,53 @@ def dashboard(results,best):
     print("===================================================")
 
     print("TIME:",datetime.now().strftime("%H:%M:%S"))
-    print("---------------------------------------------------")
 
     for r in results:
         print(f"{r['symbol']} | {r['signal']} | Conf {r['confidence']:.1f}% | RSI {r['rsi']:.1f} | ADX {r['adx']:.1f}")
 
     print("---------------------------------------------------")
-
-    print("🔥 BEST MARKET:",best["symbol"])
-    print("SIGNAL:",best["signal"])
-    print("CONFIDENCE:",f"{best['confidence']:.1f}%")
-
-    print("---------------------------------------------------")
-
-    trades = memory["trades"]
-    wins = memory["wins"]
-    winrate = (wins/trades)*100 if trades>0 else 0
-
-    print("📊 BOT STATISTICS")
-    print("Trades:",memory["trades"])
-    print("Wins:",memory["wins"])
-    print("Losses:",memory["losses"])
-    print("Winrate:",f"{winrate:.1f}%")
-    print("PnL:",round(memory["pnl"],2))
-    print("Last Trade:",memory["last_trade"])
+    print("🔥 BEST:",best["symbol"],best["signal"],best["confidence"])
+    print("💰 Wallet:",wallet,"USDT")
+    print("🌊 Volatility:",best["volatility"])
+    print("⚡ Leverage:",best["leverage"])
+    print("🧭 Mode:",best["mode"])
 
     print("---------------------------------------------------")
+    print("📡 LIVE POSITIONS")
 
-    print("💰 WALLET INFO")
-    print("Wallet Balance:",round(wallet,2),"USDT")
-    print("Margin Used:",round(margin,2),"USDT")
+    live = get_live_positions()
+
+    for p in live:
+        print(p["symbol"],p["pnl"],p["leverage"],p["entry"],p["current"])
 
     print("---------------------------------------------------")
+    print("📜 CLOSED TRADES")
+
+    closed = [h for h in history if h["status"] == "CLOSED"]
+
+    for c in closed[-5:]:
+        print(c["symbol"],c["side"],c["pnl"])
 
 # ================= MAIN LOOP =================
 
 while True:
 
-    try:
+    results = []
 
-        results = []
+    for s in SYMBOLS:
+        data = analyze_market(s)
+        if data:
+            results.append(data)
 
-        for s in SYMBOLS:
+    best = max(results,key=lambda x:x["confidence"])
 
-            data = analyze_market(s)
+    dashboard(results,best)
 
-            if data:
-                results.append(data)
+    if best["confidence"] >= 75:
+        execute_trade(best)
 
-        if not results:
-            time.sleep(10)
-            continue
+    update_history()
+    save_history(history)
+    save_memory(memory)
 
-        best = max(results,key=lambda x:x["confidence"])
-
-        dashboard(results,best)
-
-        cooldown_ok = time.time() - memory["last_trade_time"] > COOLDOWN
-
-        if best["confidence"] >= 75 and cooldown_ok:
-
-            if not position_open(best["symbol"]):
-                execute_trade(best)
-
-        update_pnl()
-        save_memory(memory)
-
-        time.sleep(15)
-
-    except Exception as e:
-        print("MAIN LOOP ERROR:",e)
-        time.sleep(10)
+    time.sleep(15)

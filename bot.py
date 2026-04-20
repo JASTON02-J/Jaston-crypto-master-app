@@ -5,11 +5,13 @@ import os
 import time
 import json
 from datetime import datetime
+from dotenv import load_dotenv
+load_dotenv()
 
 # ================= CONFIG =================
 
-API_KEY = os.getenv("dUTfsZjIuDVwHcaIAYwVEJ4n7Te8jHsEeRc2wJencEPxHC0XKygve29qOYpY1Co9")
-SECRET = os.getenv("m2h1SRu4tU9wdMdDkqHVII8lpU6qtnCXvajiYOp9uUTxH6iaY37K3fujcOO6IXYh")
+API_KEY = os.getenv("OGewM9ZghugzimAbvvkwC3DMUri19S1mAUECkya5XHsc4D8gw4AfUIuvqG4tOe9R")
+SECRET = os.getenv("PxXWbVdrlCUfykBSlAd3XO5AhqfCi1OCmLi3gQMoBfxu97CxDhxKc042NQWRLKZw")
 
 SYMBOLS = ["BTC/USDT","ETH/USDT","SOL/USDT","BNB/USDT"]
 

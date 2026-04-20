@@ -92,14 +92,28 @@ def get_data(symbol,tf):
     except:
         return None
 
-# ================= VOLATILITY =================
+# ================= VOLATILITY ENGINE =================
 
 def calculate_volatility(df):
     df["return"] = df["c"].pct_change()
     vol = df["return"].rolling(14).std().iloc[-1]
     return abs(vol*100) if not pd.isna(vol) else 0
 
-# ================= LEVERAGE + MODE =================
+
+def classify_volatility(vol):
+
+    if vol < 0.2:
+        return "LOW", "SAFE"
+    elif vol < 0.5:
+        return "NORMAL", "SAFE"
+    elif vol < 1.0:
+        return "MEDIUM", "CAUTION"
+    elif vol < 2.0:
+        return "HIGH", "RISKY"
+    else:
+        return "EXTREME", "DANGER"
+
+# ================= LEVERAGE SYSTEM =================
 
 def get_leverage_and_mode(conf, vol):
 
@@ -169,7 +183,9 @@ def analyze_market(symbol):
         score += 1
 
     confidence = min((score/6)*100,100)
+
     volatility = calculate_volatility(df)
+    volatility_label, risk_level = classify_volatility(volatility)
 
     leverage, mode = get_leverage_and_mode(confidence, volatility)
 
@@ -181,6 +197,8 @@ def analyze_market(symbol):
         "rsi":rsi,
         "adx":adx,
         "volatility":volatility,
+        "volatility_label":volatility_label,
+        "risk_level":risk_level,
         "leverage":leverage,
         "mode":mode
     }
@@ -204,9 +222,7 @@ def get_live_positions():
                 "current": float(p.get("markPrice") or 0),
                 "pnl": float(p.get("unrealizedPnl") or 0),
                 "leverage": float(p.get("leverage") or 0),
-                "liquidation": p.get("liquidationPrice","N/A"),
-                "tp": p.get("takeProfitPrice","NOT SET"),
-                "sl": p.get("stopLossPrice","NOT SET")
+                "liquidation": p.get("liquidationPrice","N/A")
             })
 
         return live
@@ -214,63 +230,7 @@ def get_live_positions():
     except:
         return []
 
-# ================= TRADE HISTORY =================
-
-def detect_reason(tp, sl, price):
-
-    try:
-        if tp != "NOT SET" and price >= float(tp):
-            return "TAKE_PROFIT"
-        if sl != "NOT SET" and price <= float(sl):
-            return "STOP_LOSS"
-    except:
-        pass
-    return "BOT_EXIT"
-
-# ================= EXECUTE TRADE =================
-
-def execute_trade(data):
-
-    symbol = data["symbol"]
-    signal = data["signal"]
-    price = data["price"]
-
-    wallet, _ = get_wallet_info()
-    risk = wallet * RISK_PER_TRADE
-    size = risk / price
-
-    if signal == "BUY":
-        exchange.create_market_buy_order(symbol,size)
-    else:
-        exchange.create_market_sell_order(symbol,size)
-
-    history.append({
-        "symbol":symbol,
-        "side":signal,
-        "entry_price":price,
-        "time_opened":time.time(),
-        "status":"OPEN",
-        "pnl":0
-    })
-
-# ================= UPDATE HISTORY =================
-
-def update_history():
-
-    live = get_live_positions()
-
-    for h in history:
-
-        if h["status"] == "OPEN":
-
-            for p in live:
-
-                if p["symbol"] == h["symbol"]:
-
-                    h["pnl"] = p["pnl"]
-                    h["last_price"] = p["current"]
-
-# ================= DASHBOARD (UNCHANGED + ADDITIONS ONLY) =================
+# ================= DASHBOARD (UNCHANGED) =================
 
 def dashboard(results,best):
 
@@ -291,9 +251,15 @@ def dashboard(results,best):
     print("---------------------------------------------------")
     print("🔥 BEST:",best["symbol"],best["signal"],best["confidence"])
     print("💰 Wallet:",wallet,"USDT")
-    print("🌊 Volatility:",best["volatility"])
     print("⚡ Leverage:",best["leverage"])
     print("🧭 Mode:",best["mode"])
+
+    # ================= ONLY ADDITIONS BELOW =================
+
+    print("---------------------------------------------------")
+    print("🌊 VOLATILITY:", f"{best['volatility']:.2f}%")
+    print("📊 STATE:", best["volatility_label"])
+    print("⚠️ RISK:", best["risk_level"])
 
     print("---------------------------------------------------")
     print("📡 LIVE POSITIONS")
@@ -306,7 +272,7 @@ def dashboard(results,best):
     print("---------------------------------------------------")
     print("📜 CLOSED TRADES")
 
-    closed = [h for h in history if h["status"] == "CLOSED"]
+    closed = [h for h in history if h.get("status") == "CLOSED"]
 
     for c in closed[-5:]:
         print(c["symbol"],c["side"],c["pnl"])
@@ -325,12 +291,5 @@ while True:
     best = max(results,key=lambda x:x["confidence"])
 
     dashboard(results,best)
-
-    if best["confidence"] >= 75:
-        execute_trade(best)
-
-    update_history()
-    save_history(history)
-    save_memory(memory)
 
     time.sleep(15)

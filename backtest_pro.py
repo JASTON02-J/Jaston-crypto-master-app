@@ -1,134 +1,223 @@
 import ccxt
 import pandas as pd
 import ta
-import os
 from datetime import datetime
 
 # ================= CONFIG =================
-SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT']
-INITIAL_CAPITAL = 10.0
-LEVERAGE = 20
 
-STOP_LOSS_AMT = 0.20
-TAKE_PROFIT_AMT = 0.40
+PAIRS = [
+"BTC/USDT",
+"ETH/USDT",
+"SOL/USDT",
+"BNB/USDT"
+]
 
-exchange = ccxt.binance({'options': {'defaultType': 'future'}})
+TIMEFRAME = "5m"
+HTF = "15m"
 
-# ================= FORENSIC LOG =================
-trade_log = []
+STOP_LOSS = 0.01
+TAKE_PROFIT = 0.025
 
-# ================= ANALYZE =================
-def get_data(symbol):
-    bars = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=300)
-    df = pd.DataFrame(bars, columns=['time','open','high','low','close','vol'])
+INITIAL_BALANCE = 10
 
-    df['ema9'] = ta.trend.ema_indicator(df['close'], 9)
-    df['ema21'] = ta.trend.ema_indicator(df['close'], 21)
-    df['adx'] = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], 14).adx()
+# ================= EXCHANGE =================
 
-    df['time'] = pd.to_datetime(df['time'], unit='ms')
+exchange = ccxt.binance({
+"enableRateLimit":True
+})
+
+# ================= DATA =================
+
+def get_data(pair,tf):
+
+    bars = exchange.fetch_ohlcv(pair,tf,limit=500)
+
+    df = pd.DataFrame(bars,columns=[
+    "time","open","high","low","close","volume"
+    ])
+
+    df["time"] = pd.to_datetime(df["time"],unit="ms")
+
     return df
 
-# ================= BACKTEST ENGINE =================
-wallet = INITIAL_CAPITAL
+# ================= INDICATORS =================
 
-for symbol in SYMBOLS:
+def indicators(df):
 
-    df = get_data(symbol)
+    df["ema9"] = ta.trend.ema_indicator(df["close"],9)
+    df["ema21"] = ta.trend.ema_indicator(df["close"],21)
 
-    in_trade = False
-    entry = 0
-    entry_time = None
-    side = ""
-    cooldown = 0
+    df["rsi"] = ta.momentum.RSIIndicator(df["close"],14).rsi()
 
-    for i in range(2, len(df)):
+    adx = ta.trend.ADXIndicator(
+    df["high"],
+    df["low"],
+    df["close"],
+    14
+    )
 
-        price = df['close'].iloc[i]
-        time = df['time'].iloc[i]
+    df["adx"] = adx.adx()
 
-        ema_up = df['ema9'].iloc[i] > df['ema21'].iloc[i]
-        ema_down = df['ema9'].iloc[i] < df['ema21'].iloc[i]
+    df["vol_ma"] = df["volume"].rolling(20).mean()
 
-        adx = df['adx'].iloc[i]
+    return df
 
-        # ================= ENTRY =================
-        if not in_trade and cooldown == 0 and adx > 20:
+# ================= BACKTEST =================
 
-            if ema_up:
-                in_trade = True
-                entry = price
-                entry_time = time
-                side = "LONG"
+trades=[]
 
-            elif ema_down:
-                in_trade = True
-                entry = price
-                entry_time = time
-                side = "SHORT"
+balance = INITIAL_BALANCE
 
-        # ================= EXIT =================
-        elif in_trade:
+pair_counter={}
 
-            pnl = (price - entry)/entry if side=="LONG" else (entry - price)/entry
-            pnl_usdt = wallet * 0.5 * pnl * LEVERAGE
+for pair in PAIRS:
 
-            sl = entry - (entry * 0.005) if side=="LONG" else entry + (entry * 0.005)
-            tp = entry + (entry * 0.01) if side=="LONG" else entry - (entry * 0.01)
+    df = get_data(pair,TIMEFRAME)
+    htf = get_data(pair,HTF)
 
-            exit_sl = pnl_usdt <= -STOP_LOSS_AMT
-            exit_tp = pnl_usdt >= TAKE_PROFIT_AMT
-            exit_trend = (ema_down if side=="LONG" else ema_up)
+    df = indicators(df)
 
-            if exit_sl or exit_tp or exit_trend:
+    htf["ema50"]=ta.trend.ema_indicator(htf["close"],50)
+    htf["ema200"]=ta.trend.ema_indicator(htf["close"],200)
 
-                exit_time = time
+    df=df.dropna()
+    htf=htf.dropna()
 
-                wallet += pnl_usdt
+    position=None
 
-                trade_log.append({
-                    "symbol": symbol,
-                    "type": side,
-                    "entry_time": entry_time,
-                    "exit_time": exit_time,
-                    "entry_price": entry,
-                    "exit_price": price,
-                    "sl_level": sl,
-                    "tp_level": tp,
-                    "pnl": pnl_usdt,
-                    "reason": "SL" if exit_sl else ("TP" if exit_tp else "TREND")
-                })
+    for i in range(50,len(df)):
 
-                in_trade = False
-                cooldown = 3   # 🔥 FIX: prevents overtrading
+        row=df.iloc[i]
+
+        price=row["close"]
+
+        ema9=row["ema9"]
+        ema21=row["ema21"]
+
+        rsi=row["rsi"]
+        adx=row["adx"]
+
+        volume=row["volume"]
+        vol_ma=row["vol_ma"]
+
+        htf_row=htf.iloc[min(i,len(htf)-1)]
+
+        trend="UP" if htf_row["ema50"]>htf_row["ema200"] else "DOWN"
+
+        signal=None
+        score=0
+
+        if ema9>ema21 and trend=="UP":
+            signal="LONG"
+            score+=1
+
+        elif ema9<ema21 and trend=="DOWN":
+            signal="SHORT"
+            score+=1
+
+        if rsi>55 or rsi<45:
+            score+=1
+
+        if adx>20:
+            score+=1
+
+        if volume>vol_ma:
+            score+=1
+
+        confidence=(score/4)*100
+
+        if position is None and confidence>=75:
+
+            position={
+            "pair":pair,
+            "type":signal,
+            "entry":price,
+            "entry_time":row["time"]
+            }
+
+        if position:
+
+            entry=position["entry"]
+
+            if position["type"]=="LONG":
+
+                sl=entry*(1-STOP_LOSS)
+                tp=entry*(1+TAKE_PROFIT)
+
+                if row["low"]<=sl:
+
+                    pnl=-STOP_LOSS
+                    reason="SL"
+
+                elif row["high"]>=tp:
+
+                    pnl=TAKE_PROFIT
+                    reason="TP"
+
+                else:
+                    continue
+
+            else:
+
+                sl=entry*(1+STOP_LOSS)
+                tp=entry*(1-TAKE_PROFIT)
+
+                if row["high"]>=sl:
+
+                    pnl=-STOP_LOSS
+                    reason="SL"
+
+                elif row["low"]<=tp:
+
+                    pnl=TAKE_PROFIT
+                    reason="TP"
+
+                else:
+                    continue
+
+            profit=balance*pnl
+            balance+=profit
+
+            trades.append([
+            pair,
+            position["type"],
+            position["entry_time"],
+            row["time"],
+            round(profit,3),
+            reason
+            ])
+
+            pair_counter[pair]=pair_counter.get(pair,0)+1
+
+            position=None
 
 # ================= DASHBOARD =================
-os.system('cls' if os.name == 'nt' else 'clear')
 
-print(f"🚀 JASTON FORENSIC BACKTEST (LIVE MIRROR MODE)")
-print("====================================================================")
+print("\n🚀 JASTON FORENSIC BACKTEST (LIVE MIRROR MODE)")
+print("============================================================")
 
-print(f"{'COIN':<8} {'TYPE':<6} {'ENTRY TIME':<20} {'EXIT TIME':<20} {'PnL':<10} {'REASON'}")
-print("--------------------------------------------------------------------")
+print("COIN        TYPE     ENTRY TIME          EXIT TIME           PnL     REASON")
+print("--------------------------------------------------------------------------")
 
-for t in trade_log[-20:]:  # last 20 trades for readability
+for t in trades[:10]:
 
-    print(f"{t['symbol']:<8} {t['type']:<6} "
-          f"{str(t['entry_time'])[:19]:<20} "
-          f"{str(t['exit_time'])[:19]:<20} "
-          f"{t['pnl']:>+8.3f}   {t['reason']}")
+    coin,typ,entry,exit,pnl,reason=t
 
-print("====================================================================")
+    print(f"{coin:<10} {typ:<7} {entry}  {exit}  {pnl:+.3f}   {reason}")
 
-print(f"🚀 TOTAL TRADES: {len(trade_log)}")
-print(f"💰 INITIAL: ${INITIAL_CAPITAL}")
-print(f"💰 FINAL: ${wallet:.2f}")
-print(f"📈 NET PROFIT: ${wallet - INITIAL_CAPITAL:.4f}")
+print("==========================================================================")
 
-print("====================================================================")
+print("\n🚀 TOTAL TRADES:",len(trades))
+print("💰 INITIAL: $",INITIAL_BALANCE)
+print("💰 FINAL: $",round(balance,2))
+print("📈 NET PROFIT: $",round(balance-INITIAL_BALANCE,4))
 
-# ================= FORENSIC INSIGHT =================
-print("🧠 TRADE ANALYSIS MODE")
-print(f"📊 MOST ACTIVE MARKET: {max(set([t['symbol'] for t in trade_log]), key=lambda x: [t['symbol'] for t in trade_log].count(x) if trade_log else 'NONE')}")
+print("\n🧠 TRADE ANALYSIS MODE")
 
-print(f"⚠️ NOTE: These timestamps can be cross-checked on TradingView for validation")
+if pair_counter:
+
+    most=max(pair_counter,key=pair_counter.get)
+
+    print("📊 MOST ACTIVE MARKET:",most)
+
+print("\n⚠ NOTE: These timestamps can be cross-checked on TradingView for validation")

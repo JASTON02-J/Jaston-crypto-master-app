@@ -18,10 +18,8 @@ RISK_PER_TRADE = 0.02
 INITIAL_BALANCE = 10
 COOLDOWN = 60
 
-FEE = 0.0004        # 0.04%
-SLIPPAGE = 0.0005   # 0.05%
-
-# ================= EXCHANGE =================
+FEE = 0.0004
+SLIPPAGE = 0.0005
 
 exchange = ccxt.binance({"enableRateLimit": True})
 
@@ -29,13 +27,38 @@ exchange = ccxt.binance({"enableRateLimit": True})
 
 def get_data(pair, tf):
     bars = exchange.fetch_ohlcv(pair, tf, limit=500)
-
-    df = pd.DataFrame(bars, columns=[
-        "time","open","high","low","close","volume"
-    ])
-
+    df = pd.DataFrame(bars, columns=["time","open","high","low","close","volume"])
     df["time"] = pd.to_datetime(df["time"], unit="ms")
     return df
+
+# ================= VOLATILITY =================
+
+def calculate_volatility(df):
+    df["return"] = df["close"].pct_change()
+    vol = df["return"].rolling(14).std().iloc[-1]
+    return abs(vol*100) if not pd.isna(vol) else 0
+
+def classify_volatility(vol):
+    if vol < 0.2:
+        return "LOW"
+    elif vol < 0.5:
+        return "NORMAL"
+    elif vol < 1.0:
+        return "MEDIUM"
+    elif vol < 2.0:
+        return "HIGH"
+    else:
+        return "EXTREME"
+
+# ================= LEVERAGE =================
+
+def get_leverage(conf, vol):
+    if conf >= 90:
+        return 12 if vol < 0.3 else 7
+    elif conf >= 80:
+        return 10 if vol < 0.3 else 5
+    else:
+        return 5
 
 # ================= INDICATORS =================
 
@@ -43,10 +66,8 @@ def apply_indicators(df):
     df["ema9"] = ta.trend.ema_indicator(df["close"], 9)
     df["ema21"] = ta.trend.ema_indicator(df["close"], 21)
     df["rsi"] = ta.momentum.RSIIndicator(df["close"], 14).rsi()
-
     adx = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], 14)
     df["adx"] = adx.adx()
-
     df["vol_ma"] = df["volume"].rolling(20).mean()
     return df
 
@@ -69,7 +90,6 @@ for pair in PAIRS:
     htf["ema50"] = ta.trend.ema_indicator(htf["close"], 50)
     htf["ema200"] = ta.trend.ema_indicator(htf["close"], 200)
 
-    # 🔥 HTF ALIGNMENT (TIME BASED)
     df = pd.merge_asof(
         df.sort_values("time"),
         htf[["time","ema50","ema200"]].sort_values("time"),
@@ -83,15 +103,14 @@ for pair in PAIRS:
 
     for i in range(50, len(df)):
 
+        slice_df = df.iloc[:i]
         row = df.iloc[i]
         price = row["close"]
 
         ema9 = row["ema9"]
         ema21 = row["ema21"]
-
         rsi = row["rsi"]
         adx = row["adx"]
-
         volume = row["volume"]
         vol_ma = row["vol_ma"]
 
@@ -102,41 +121,48 @@ for pair in PAIRS:
 
         if ema9 > ema21 and trend == "UP":
             signal = "LONG"
-            score += 1
-
+            score += 2
         elif ema9 < ema21 and trend == "DOWN":
             signal = "SHORT"
-            score += 1
+            score += 2
 
-        if rsi > 55 or rsi < 45:
+        if 50 < rsi < 70:
             score += 1
 
         if adx > 20:
-            score += 1
+            score += 2
 
         if volume > vol_ma:
             score += 1
 
-        confidence = (score / 4) * 100
+        confidence = min((score / 6) * 100, 100)
+
+        # VOLATILITY
+        volatility = calculate_volatility(slice_df)
+        vol_label = classify_volatility(volatility)
+
+        # SKIP EXTREME MARKET
+        if vol_label == "EXTREME":
+            equity_curve.append(balance)
+            continue
+
+        leverage = get_leverage(confidence, volatility)
 
         current_time = row["time"].timestamp()
         cooldown_ok = current_time - last_trade_time > COOLDOWN
 
         # ================= ENTRY =================
 
-        if position is None and confidence >= 75 and signal and cooldown_ok:
+        if position is None and confidence >= 70 and signal and cooldown_ok:
 
-            # apply slippage
-            if signal == "LONG":
-                entry = price * (1 + SLIPPAGE)
-            else:
-                entry = price * (1 - SLIPPAGE)
+            entry = price * (1 + SLIPPAGE) if signal == "LONG" else price * (1 - SLIPPAGE)
 
             position = {
                 "pair": pair,
                 "type": signal,
                 "entry": entry,
-                "entry_time": row["time"]
+                "entry_time": row["time"],
+                "leverage": leverage
             }
 
             last_trade_time = current_time
@@ -146,9 +172,9 @@ for pair in PAIRS:
         if position:
 
             entry = position["entry"]
+            lev = position["leverage"]
 
             if position["type"] == "LONG":
-
                 sl = entry * (1 - STOP_LOSS)
                 tp = entry * (1 + TAKE_PROFIT)
 
@@ -156,23 +182,19 @@ for pair in PAIRS:
                 hit_tp = row["high"] >= tp
 
                 if hit_sl and hit_tp:
-                    pnl = -STOP_LOSS  # assume worst case
+                    pnl = -STOP_LOSS
                     reason = "SL/TP same candle"
-
                 elif hit_sl:
                     pnl = -STOP_LOSS
                     reason = "SL"
-
                 elif hit_tp:
                     pnl = TAKE_PROFIT
                     reason = "TP"
-
                 else:
                     equity_curve.append(balance)
                     continue
 
             else:
-
                 sl = entry * (1 + STOP_LOSS)
                 tp = entry * (1 - TAKE_PROFIT)
 
@@ -182,15 +204,12 @@ for pair in PAIRS:
                 if hit_sl and hit_tp:
                     pnl = -STOP_LOSS
                     reason = "SL/TP same candle"
-
                 elif hit_sl:
                     pnl = -STOP_LOSS
                     reason = "SL"
-
                 elif hit_tp:
                     pnl = TAKE_PROFIT
                     reason = "TP"
-
                 else:
                     equity_curve.append(balance)
                     continue
@@ -198,7 +217,7 @@ for pair in PAIRS:
             # ================= PROFIT =================
 
             risk_amount = balance * RISK_PER_TRADE
-            gross_profit = risk_amount * (pnl / STOP_LOSS)
+            gross_profit = risk_amount * (pnl / STOP_LOSS) * lev
 
             fee_cost = balance * FEE
             profit = gross_profit - fee_cost
@@ -249,8 +268,6 @@ if pair_counter:
     most = max(pair_counter, key=pair_counter.get)
     print("📊 MOST ACTIVE MARKET:", most)
 
-# ================= EXTRA DASHBOARD =================
-
 wins = len([t for t in trades if t[4] > 0])
 losses = len([t for t in trades if t[4] <= 0])
 winrate = (wins/len(trades))*100 if trades else 0
@@ -259,8 +276,6 @@ print("\n📊 ADVANCED METRICS")
 print("Wins:", wins)
 print("Losses:", losses)
 print("Winrate:", round(winrate,2), "%")
-
-# ================= EQUITY CURVE =================
 
 plt.plot(equity_curve)
 plt.title("Equity Curve")

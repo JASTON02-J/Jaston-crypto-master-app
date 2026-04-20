@@ -16,24 +16,21 @@ SYMBOLS = ["BTC/USDT","ETH/USDT","SOL/USDT","BNB/USDT"]
 TIMEFRAME = "5m"
 HTF = "15m"
 
-LEVERAGE = 5
 RISK_PER_TRADE = 0.02
-
 STOP_LOSS = 0.01
 TAKE_PROFIT = 0.025
-
 COOLDOWN = 60
 
 # ================= EXCHANGE =================
 
 exchange = ccxt.binance({
-    'apiKey': API_KEY,
-    'secret': SECRET,
-    'enableRateLimit': True,
-    'options': {'defaultType': 'future'}
+    "apiKey": API_KEY,
+    "secret": SECRET,
+    "enableRateLimit": True,
+    "options": {"defaultType": "future"}
 })
 
-exchange.set_sandbox_mode(False)
+exchange.load_markets()
 
 # ================= MEMORY =================
 
@@ -42,7 +39,6 @@ MEMORY_FILE = "bot_memory.json"
 def load_memory():
 
     if os.path.exists(MEMORY_FILE):
-
         try:
             return json.load(open(MEMORY_FILE))
         except:
@@ -74,9 +70,9 @@ def position_open(symbol):
 
         for p in positions:
 
-            if p['symbol'] == symbol.replace("/",""):
+            if p["symbol"] == symbol.replace("/",""):
 
-                if float(p['contracts']) > 0:
+                if float(p["contracts"]) > 0:
                     return True
 
     except:
@@ -90,14 +86,14 @@ def get_data(symbol,tf):
 
     try:
 
-        bars = exchange.fetch_ohlcv(symbol,tf,limit=150)
+        bars = exchange.fetch_ohlcv(symbol,tf,limit=200)
 
-        if bars is None or len(bars) < 50:
+        if not bars:
             return None
 
-        df = pd.DataFrame(bars,columns=['t','o','h','l','c','v'])
+        df = pd.DataFrame(bars,columns=["t","o","h","l","c","v"])
 
-        df[['o','h','l','c','v']] = df[['o','h','l','c','v']].astype(float)
+        df[["o","h","l","c","v"]] = df[["o","h","l","c","v"]].astype(float)
 
         return df
 
@@ -107,7 +103,7 @@ def get_data(symbol,tf):
 
         return None
 
-# ================= MARKET ANALYSIS =================
+# ================= ANALYSIS =================
 
 def analyze_market(symbol):
 
@@ -119,16 +115,19 @@ def analyze_market(symbol):
         if df is None or htf is None:
             return None
 
-        df['ema9'] = ta.trend.ema_indicator(df['c'],9)
-        df['ema21'] = ta.trend.ema_indicator(df['c'],21)
+        if len(df) < 50 or len(htf) < 50:
+            return None
 
-        df['rsi'] = ta.momentum.RSIIndicator(df['c'],14).rsi()
-        df['adx'] = ta.trend.ADXIndicator(df['h'],df['l'],df['c'],14).adx()
+        df["ema9"] = ta.trend.ema_indicator(df["c"],9)
+        df["ema21"] = ta.trend.ema_indicator(df["c"],21)
 
-        df['vol_ma'] = df['v'].rolling(20).mean()
+        df["rsi"] = ta.momentum.RSIIndicator(df["c"],14).rsi()
+        df["adx"] = ta.trend.ADXIndicator(df["h"],df["l"],df["c"],14).adx()
 
-        htf['ema50'] = ta.trend.ema_indicator(htf['c'],50)
-        htf['ema200'] = ta.trend.ema_indicator(htf['c'],200)
+        df["vol_ma"] = df["v"].rolling(20).mean()
+
+        htf["ema50"] = ta.trend.ema_indicator(htf["c"],50)
+        htf["ema200"] = ta.trend.ema_indicator(htf["c"],200)
 
         df = df.dropna()
         htf = htf.dropna()
@@ -139,27 +138,26 @@ def analyze_market(symbol):
         last = df.iloc[-1]
         last_htf = htf.iloc[-1]
 
-        price = float(last['c'])
+        price = float(last["c"])
+        ema9 = float(last["ema9"])
+        ema21 = float(last["ema21"])
 
-        ema9 = float(last['ema9'])
-        ema21 = float(last['ema21'])
+        rsi = float(last["rsi"])
+        adx = float(last["adx"])
 
-        rsi = float(last['rsi'])
-        adx = float(last['adx'])
+        volume = float(last["v"])
+        vol_ma = float(last["vol_ma"])
 
-        volume = float(last['v'])
-        vol_ma = float(last['vol_ma'])
-
-        htf_trend = "UP" if last_htf['ema50'] > last_htf['ema200'] else "DOWN"
+        trend = "UP" if last_htf["ema50"] > last_htf["ema200"] else "DOWN"
 
         signal = "NONE"
         score = 0
 
-        if ema9 > ema21 and htf_trend == "UP":
+        if ema9 > ema21 and trend == "UP":
             signal = "BUY"
             score += 1
 
-        elif ema9 < ema21 and htf_trend == "DOWN":
+        elif ema9 < ema21 and trend == "DOWN":
             signal = "SELL"
             score += 1
 
@@ -175,7 +173,6 @@ def analyze_market(symbol):
         confidence = (score/4)*100
 
         return {
-
             "symbol":symbol,
             "price":price,
             "signal":signal,
@@ -202,7 +199,7 @@ def execute_trade(data):
 
         balance = exchange.fetch_balance()
 
-        usdt = balance['USDT']['free']
+        usdt = balance["USDT"]["free"]
 
         risk_amount = usdt * RISK_PER_TRADE
 
@@ -222,47 +219,7 @@ def execute_trade(data):
             sl = price*(1+STOP_LOSS)
             tp = price*(1-TAKE_PROFIT)
 
-        amount = order['amount']
-
-        if signal == "BUY":
-
-            exchange.create_order(
-                symbol,
-                'STOP_MARKET',
-                'sell',
-                amount,
-                None,
-                {'stopPrice':sl}
-            )
-
-            exchange.create_order(
-                symbol,
-                'TAKE_PROFIT_MARKET',
-                'sell',
-                amount,
-                None,
-                {'stopPrice':tp}
-            )
-
-        else:
-
-            exchange.create_order(
-                symbol,
-                'STOP_MARKET',
-                'buy',
-                amount,
-                None,
-                {'stopPrice':sl}
-            )
-
-            exchange.create_order(
-                symbol,
-                'TAKE_PROFIT_MARKET',
-                'buy',
-                amount,
-                None,
-                {'stopPrice':tp}
-            )
+        amount = order["amount"]
 
         memory["trades"] += 1
         memory["last_trade"] = symbol + " " + signal
@@ -276,21 +233,18 @@ def execute_trade(data):
 
 def dashboard(results,best):
 
-    os.system('cls' if os.name=='nt' else 'clear')
+    os.system("cls" if os.name=="nt" else "clear")
 
-    print("==============================================================")
-    print("                 JASTON MASTER TRADE")
-    print("          Advanced AI Futures Trading Engine")
-    print("==============================================================")
+    print("===================================================")
+    print("              JASTON MASTER TRADE")
+    print("        Advanced AI Futures Trading Engine")
+    print("===================================================")
 
-    print("TIME:",datetime.now().strftime('%H:%M:%S'))
+    print("TIME:",datetime.now().strftime("%H:%M:%S"))
 
-    print("--------------------------------------------------------------")
+    print("---------------------------------------------------")
 
     for r in results:
-
-        if r is None:
-            continue
 
         print(
         f"{r['symbol']} | {r['signal']} | "
@@ -298,21 +252,18 @@ def dashboard(results,best):
         f"RSI {r['rsi']:.1f} | ADX {r['adx']:.1f}"
         )
 
-    print("--------------------------------------------------------------")
+    print("---------------------------------------------------")
 
-    print("🔥 BEST MARKET:",best['symbol'])
-    print("SIGNAL:",best['signal'])
+    print("🔥 BEST MARKET:",best["symbol"])
+    print("SIGNAL:",best["signal"])
     print("CONFIDENCE:",f"{best['confidence']:.1f}%")
 
-    print("--------------------------------------------------------------")
+    print("---------------------------------------------------")
 
     trades = memory["trades"]
     wins = memory["wins"]
 
-    winrate = 0
-
-    if trades > 0:
-        winrate = (wins/trades)*100
+    winrate = (wins/trades)*100 if trades>0 else 0
 
     print("📊 BOT STATISTICS")
 
@@ -323,7 +274,7 @@ def dashboard(results,best):
     print("PnL:",memory["pnl"])
     print("Last Trade:",memory["last_trade"])
 
-    print("--------------------------------------------------------------")
+    print("---------------------------------------------------")
 
 # ================= MAIN LOOP =================
 
@@ -337,12 +288,12 @@ while True:
 
             data = analyze_market(s)
 
-            if data is not None:
+            if data:
                 results.append(data)
 
-        if len(results) == 0:
+        if not results:
 
-            print("No market data yet...")
+            print("Waiting for market data...")
             time.sleep(10)
             continue
 

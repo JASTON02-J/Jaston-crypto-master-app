@@ -16,7 +16,7 @@ TAKE_PROFIT = 0.025
 RISK_PER_TRADE = 0.02
 
 INITIAL_BALANCE = 10
-COOLDOWN = 60
+COOLDOWN = 300  # improved (5 min)
 
 FEE = 0.0004
 SLIPPAGE = 0.0005
@@ -34,6 +34,7 @@ def get_data(pair, tf):
 # ================= VOLATILITY =================
 
 def calculate_volatility(df):
+    df = df.copy()
     df["return"] = df["close"].pct_change()
     vol = df["return"].rolling(14).std().iloc[-1]
     return abs(vol*100) if not pd.isna(vol) else 0
@@ -79,6 +80,7 @@ equity_curve = []
 
 pair_counter = {}
 last_trade_time = 0
+skip_counter = 0  # NEW
 
 for pair in PAIRS:
 
@@ -137,13 +139,19 @@ for pair in PAIRS:
 
         confidence = min((score / 6) * 100, 100)
 
-        # VOLATILITY
+        # ================= FILTERS =================
+
         volatility = calculate_volatility(slice_df)
         vol_label = classify_volatility(volatility)
 
-        # SKIP EXTREME MARKET
-        if vol_label == "EXTREME":
+        if vol_label in ["HIGH", "EXTREME"]:
             equity_curve.append(balance)
+            skip_counter += 1
+            continue
+
+        if adx < 25:
+            equity_curve.append(balance)
+            skip_counter += 1
             continue
 
         leverage = get_leverage(confidence, volatility)
@@ -153,7 +161,7 @@ for pair in PAIRS:
 
         # ================= ENTRY =================
 
-        if position is None and confidence >= 70 and signal and cooldown_ok:
+        if position is None and confidence >= 80 and signal and cooldown_ok:
 
             entry = price * (1 + SLIPPAGE) if signal == "LONG" else price * (1 - SLIPPAGE)
 
@@ -217,9 +225,9 @@ for pair in PAIRS:
             # ================= PROFIT =================
 
             risk_amount = balance * RISK_PER_TRADE
-            gross_profit = risk_amount * (pnl / STOP_LOSS) * lev
+            gross_profit = risk_amount * (pnl / STOP_LOSS)  # FIXED
 
-            fee_cost = balance * FEE
+            fee_cost = risk_amount * FEE * 2  # FIXED
             profit = gross_profit - fee_cost
 
             balance += profit
@@ -276,6 +284,9 @@ print("\n📊 ADVANCED METRICS")
 print("Wins:", wins)
 print("Losses:", losses)
 print("Winrate:", round(winrate,2), "%")
+
+# ADDED (SAFE)
+print("⛔ Skipped Trades:", skip_counter)
 
 plt.plot(equity_curve)
 plt.title("Equity Curve")
